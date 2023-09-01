@@ -246,7 +246,7 @@ class DAC():
 
         img,HE = self.normalizer.normalize(img,stains=True)
         img = img/255
-        HE = np.clip(HE.reshape(2,img.shape[0], img.shape[1])[1],0,5)/5
+        HE = np.clip(HE.reshape(2,img.shape[0], img.shape[1])[0],0,5)/5
         mask = cv2.fillPoly(np.zeros(img.shape[:-1]), [coordinates], 1)
         self.correlogram_anchor = compute_correlogram(HE,mask,len(self.isolines),15)
 
@@ -339,7 +339,7 @@ class DAC():
     
         img,HE = self.normalizer.normalize(img,stains=True)
         img = img/255
-        HE = np.clip(HE.reshape(2,img.shape[0], img.shape[1])[1],0,5)/5
+        HE = np.clip(HE.reshape(2,img.shape[0], img.shape[1])[0],0,5)/5
         #### Initialize variables
         self.dims = np.array(img.shape[:-1])
 
