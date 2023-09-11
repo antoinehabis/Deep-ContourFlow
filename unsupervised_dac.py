@@ -1,6 +1,5 @@
 from utils import *
 from augmentation import *
-from config import *
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
 import torchvision.models as models
@@ -17,7 +16,7 @@ from torch.nn import (
 from torchvision import transforms
 import torch.nn.functional as F
 from typing import List, Tuple
-
+import torch
 vgg16 = models.vgg16(pretrained=True)
 model = vgg16.features
 model.cuda()

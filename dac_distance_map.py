@@ -1,30 +1,23 @@
-from config import *
 from utils import *
 from augmentation import *
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
 from torchvision.models import vgg16
-from torch.nn import (
-    AvgPool2d,
-    MaxPool2d,
-    CosineSimilarity,
-    MSELoss,
-    Module,
-    ReLU,
-    Linear,
-    Sigmoid,
-)
+from torch.nn import CosineSimilarity, MSELoss, Module
 from torchvision import transforms
 import torch.nn.functional as F
 from typing import List, Tuple
 from torchstain import MacenkoNormalizer
-
+import torch
 vgg16 = vgg16(pretrained=True)
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 from scipy.interpolate import CubicSpline
 from delete_loops import delete_loops
+from tqdm import tqdm 
 
 model = vgg16.features
+vgg16 = vgg16(pretrained=True)
+mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 
 
 def compute_correlogram(img, mask, bins_space, bins_digit_size):
@@ -47,8 +40,6 @@ class Isoline_to_features(Module):
 
         self.isolines = isolines
         self.vars = vars
-        self.avg = AvgPool2d((2, 2), stride=2).cuda()
-        self.max_ = MaxPool2d((2, 2), stride=2).cuda()
         self.shapes = shapes
 
     def forward(
