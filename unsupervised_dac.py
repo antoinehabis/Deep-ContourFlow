@@ -1,18 +1,8 @@
 from utils import *
-from augmentation import *
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
 import torchvision.models as models
-from torch.nn import (
-    AvgPool2d,
-    MaxPool2d,
-    CosineSimilarity,
-    MSELoss,
-    Module,
-    ReLU,
-    Linear,
-    Sigmoid,
-)
+from torch.nn import MSELoss, Module
 from torchvision import transforms
 import torch.nn.functional as F
 from typing import List, Tuple
@@ -30,18 +20,19 @@ class Mask_to_features(Module):
         self.shapes = shapes
 
     def forward(self, activations: dict, mask: torch.tensor):
+
         mask0 = F.interpolate(
-            mask2, size=(self.shapes["0"][2], self.shapes["0"][3]), mode="bilinear"
+            mask, size=(self.shapes["0"][2], self.shapes["0"][3]), mode="bilinear"
         )
         mask1 = F.interpolate(
-            mask2, size=(self.shapes["1"][2], self.shapes["1"][3]), mode="bilinear"
+            mask, size=(self.shapes["1"][2], self.shapes["1"][3]), mode="bilinear"
         )
         mask2 = mask
         mask3 = F.interpolate(
-            mask2, size=(self.shapes["3"][2], self.shapes["3"][3]), mode="bilinear"
+            mask, size=(self.shapes["3"][2], self.shapes["3"][3]), mode="bilinear"
         )
         mask4 = F.interpolate(
-            mask2, size=(self.shapes["4"][2], self.shapes["4"][3]), mode="bilinear"
+            mask, size=(self.shapes["4"][2], self.shapes["4"][3]), mode="bilinear"
         )
 
         masks = [mask0, mask1, mask2, mask3, mask4]
@@ -79,7 +70,6 @@ class DAC:
         nb_points=100,
         n_epochs=100,
         model=multiscale,
-        dim=512,
         learning_rate=5e-2,
         clip=1e-1,
         exponential_decay=0.998,
@@ -138,7 +128,7 @@ class DAC:
 
     def get_activations(self, name):
         def hook(model, input: Tuple[torch.Tensor], output):
-            self.activations[name] = output.to(torch.float16)
+            self.activations[name] = output.to(torch.float32)
             self.shapes[name] = output.shape
 
         return hook
@@ -166,8 +156,8 @@ class DAC:
 
     def forward_on_epoch(self, contour):
         mask = self.contour_to_mask(contour)
-        features_inside, features_outside = self.dst(self.activations, mask)
-        arr0 = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0], device="cuda")
+        features_inside, features_outside = self.mtf(self.activations, mask)
+        arr0 = torch.tensor([1.0, 1/2., 1/4., 1/8., 1/16.], device="cuda")
         energies = torch.zeros(len(self.shapes)).cuda()
         arr = arr0 / torch.sum(arr0)
         for j in range(len(features_inside)):
@@ -203,7 +193,7 @@ class DAC:
         self.mesh = self.mesh.to(torch.float32).cuda() / torch.tensor(
             self.shapes["2"][2:], dtype=torch.float32, device="cuda"
         )
-        self.itf = Mask_to_features(self.shapes)
+        self.mtf = Mask_to_features(self.shapes)
 
         if img.dtype != "float64":
             raise Exception("Image must be normalized between 0 and 1")
@@ -237,12 +227,13 @@ class DAC:
 
             with torch.no_grad():
                 gradient_direction = contour.grad * clipped_norm / norm_grad
-                gradient_direction = self.convolve(gradient_direction).T
+                gradient_direction = self.convolve(gradient_direction.to(torch.float32), self.kernel).T
                 contour = (
                     contour
                     - scale * self.learning_rate * (self.ed**i) * gradient_direction
                 )
                 contour = contour.cpu().detach().numpy()
+                contour = delete_loops(contour,self.dims)
                 interpolated_contour = self.interpolate(
                     contour, n=self.nb_points
                 ).astype(np.float32)
@@ -251,5 +242,5 @@ class DAC:
             contour.requires_grad = True
 
         contours = np.roll(contours, 1, -1)
-        contours = (contours * self.dim).astype(np.int32)
+        contours = (contours * self.dims).astype(np.int32)
         return contours, tots
