@@ -3,17 +3,29 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
 from dac_distance_map import DAC
-from utils import *
+# from utils import *
 from scipy.ndimage import binary_dilation
 from tqdm import tqdm
 import pandas as pd
 from scipy.ndimage import binary_closing
 from skimage.morphology import disk
 import tifffile
+import numpy as np
+import cv2
 
+def row_to_coordinates(row):
+    class_ = row.term
+    string = row.location
+    string = string.replace("POLYGON ", "")
+    string = string.replace(", ", "),(")
+    string = string.replace(" ", ",")
+    coordinates = np.array(eval(string))
+    return coordinates, class_
 
-path_images = os.path.join(path_data,'images')
-path_masks = os.path.join(path_data,'masks')
+def row_to_filename(row):
+    filename = row.image.split(".")[0] + "_" + str(row.id) + ".tif"
+    return filename
+
 annotations = pd.read_csv(os.path.join(path_annotations,'annotations.csv'), index_col=0)
 contour_inits = np.load(os.path.join(path_data, 'contour_init.npy'), allow_pickle=True).item()
 
@@ -29,7 +41,7 @@ df = pd.DataFrame(columns = ['slide',
                              'denom_IOU',
                              'nb_image'])
 try:
-        df = pd. read_csv(os.path.join(path_dac,'scores.csv'), index_col=0)
+        df = pd. read_csv(os.path.join(path_scores,'scores.csv'), index_col=0)
 except:
         pass
 
@@ -85,46 +97,47 @@ for filename in tqdm(filenames_to_process):
         for index1, row1 in annotations.iterrows():
         
             filename_img = row_to_filename(row1)
-            print('test_filename',filename_img)
-            img = tifffile.imread(os.path.join(path_images,filename_img))
-            term = row1.term
-            contour_init = contour_inits[filename_img]
+            if filename_img != '20163_2692503.tif':
 
-            C0 = preprocess_contour(contour_init,img)
-            shape_fin, score, tots, energies = dac.predict(img,C0)
+                img = tifffile.imread(os.path.join(path_images,filename_img))
+                term = row1.term
+                contour_init = contour_inits[filename_img]
 
-            x = np.argmin(tots)
+                C0 = preprocess_contour(contour_init,img)
+                shape_fin, score, tots, energies = dac.predict(img,C0)
 
-            energie_fin = energies[x]
-            contour_pred = shape_fin[x]
+                x = np.argmin(tots)
 
-            img_true = tifffile.imread(os.path.join(path_masks,filename_img))
-            img_pred = cv2.fillPoly(np.zeros(img.shape[:-1]), contour_pred[None], 1)
-            num_DICE = 2 * np.sum(img_true * img_pred)
-            denom_DICE = (np.sum(img_true) + np.sum(img_pred))
+                energie_fin = energies[x]
+                contour_pred = shape_fin[x]
 
-            num_IOU = np.sum(img_true * img_pred)
-            denom_IOU = np.sum(np.maximum(img_true, img_pred))
+                img_true = tifffile.imread(os.path.join(path_masks,filename_img))
+                img_pred = cv2.fillPoly(np.zeros(img.shape[:-1]), contour_pred[None], 1)
+                num_DICE = 2 * np.sum(img_true * img_pred)
+                denom_DICE = (np.sum(img_true) + np.sum(img_pred))
 
-            DICE = (num_DICE / denom_DICE)*100
-            IOU = (num_IOU / denom_IOU)*100
+                num_IOU = np.sum(img_true * img_pred)
+                denom_IOU = np.sum(np.maximum(img_true, img_pred))
 
-            df = df.append({'slide':row0.image,
-                            'nb_anchor':row1.id,
-                            'DICE(%)':np.round(DICE,2),
-                            'IOU(%)':np.round(IOU,2),
-                            'gt':term,
-                            'score':score,
-                            'num_DICE':num_DICE,
-                            'num_IOU':num_IOU,
-                            'denom_DICE':denom_DICE,
-                            'denom_IOU':denom_IOU,
-                            'energy':energie_fin,
-                            'nb_image':row0.id,
-                            }, ignore_index = True)
-                            
-            dice = np.array(list(df['DICE(%)']))
-            gt = np.array(list(df['gt']))
-            print(str(np.sum(dice*gt)/np.sum(gt)))
+                DICE = (num_DICE / denom_DICE)*100
+                IOU = (num_IOU / denom_IOU)*100
 
-    df.to_csv('scores.csv')
+                df = df.append({'slide':row0.image,
+                                'nb_anchor':row1.id,
+                                'DICE(%)':np.round(DICE,2),
+                                'IOU(%)':np.round(IOU,2),
+                                'gt':term,
+                                'score':score,
+                                'num_DICE':num_DICE,
+                                'num_IOU':num_IOU,
+                                'denom_DICE':denom_DICE,
+                                'denom_IOU':denom_IOU,
+                                'energy':energie_fin,
+                                'nb_image':row0.id,
+                                }, ignore_index = True)
+                                
+                dice = np.array(list(df['DICE(%)']))
+                gt = np.array(list(df['gt']))
+                print(str(np.sum(dice*gt)/np.sum(gt)))
+
+    df.to_csv(os.path.join(path_scores,'scores.csv'))

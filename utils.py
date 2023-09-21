@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 from config import *
 from skimage.measure import label
 from scipy.interpolate import interp1d
@@ -10,12 +9,13 @@ import numpy as np
 import cv2
 from scipy.ndimage import binary_closing, binary_opening
 from skimage.morphology import disk
+from scipy.ndimage.morphology import distance_transform_edt
+
 
 
 def row_to_filename(row):
     filename = row.image.split(".")[0] + "_" + str(row.id) + ".tif"
     return filename
-
 
 def find_thresh(filename, percentile):
     img = Slide(os.path.join(path_slides, filename), processed_path="")
@@ -26,8 +26,6 @@ def find_thresh(filename, percentile):
     )
     new_img = binary_closing(1 - th2 / 255, disk(9)).astype(bool)
     return np.percentile(gray[new_img], percentile) / 255
-
-
 
 def row_to_coordinates(row):
     class_ = row.term
@@ -60,6 +58,7 @@ def retrieve_img_contour(img, thresh, mask):
     img = img / np.max(img)
     mean = np.mean(img, -1)
     l, c = np.array(img.shape[:-1]) // 2
+
     x = label(binary_closing(mean > thresh, disk(5)))
     lab = x * mask
     uniques, counts = np.unique(lab[lab > 0], return_counts=True)
@@ -83,38 +82,51 @@ def interpolate(shape, n):
 
     return shape
 
+import numpy as np
+from scipy.ndimage.morphology import distance_transform_edt
 
 
-def augmentation(img,
-                 mask):
-    
-    
-    img = (img*255).astype(np.uint8)
+def compute_correlogram(img, mask, bins_space, bins_digit_size):
+    corr = np.zeros((bins_space, bins_digit_size))
+    itf = distance_transform_edt(mask)
+    itf = itf / np.max(itf)
+    lin = np.linspace(0, 1, bins_digit_size + 1)
+    for i in range(bins_space):
+        levels = np.logical_and(itf > (i / bins_space), itf < ((i + 1) / bins_space))
+        without_zeros = img * levels
+        without_zeros = without_zeros[without_zeros > 0.0]
+        hist, _ = np.histogram(without_zeros, bins=lin, density=True)
+        corr[i] = hist
+    return corr
+
+
+def augmentation(img, mask):
+    img = (img * 255).astype(np.uint8)
     mask_shape = mask.shape
-    
-    if len(mask_shape)==2:
+
+    if len(mask_shape) == 2:
         mask = np.expand_dims(mask, -1)
-        
+
     ps = np.random.random(10)
-    if ps[0]>1/4 and ps[0]<1/2:
-        img, mask = np.rot90(img,axes = [0,1], k=1), np.rot90(mask,axes = [0,1], k=1)
-        
-    if ps[0]>1/2 and ps[0]<3/4:
-        img, mask = np.rot90(img,axes = [0,1], k=2), np.rot90(mask,axes = [0,1], k=2)
-        
-    if ps[0]>3/4 and ps[0]<1:
-        img, mask = np.rot90(img,axes = [0,1], k=3), np.rot90(mask,axes = [0,1], k=3)
-        
-    if ps[1]>0.5:
+    if ps[0] > 1 / 4 and ps[0] < 1 / 2:
+        img, mask = np.rot90(img, axes=[0, 1], k=1), np.rot90(mask, axes=[0, 1], k=1)
+
+    if ps[0] > 1 / 2 and ps[0] < 3 / 4:
+        img, mask = np.rot90(img, axes=[0, 1], k=2), np.rot90(mask, axes=[0, 1], k=2)
+
+    if ps[0] > 3 / 4 and ps[0] < 1:
+        img, mask = np.rot90(img, axes=[0, 1], k=3), np.rot90(mask, axes=[0, 1], k=3)
+
+    if ps[1] > 0.5:
         img, mask = np.flipud(img), np.flipud(mask)
-        
-    if ps[2]>0.5:
+
+    if ps[2] > 0.5:
         img, mask = np.fliplr(img), np.fliplr(mask)
-    mask = mask[:,:]
-    img = img/255
-    return img, mask 
+    mask = mask[:, :]
+    img = img / 255
+    return img, mask
 
-
+    
 def delete_loops(contour,
                  shape):
     

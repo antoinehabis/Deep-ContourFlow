@@ -1,6 +1,4 @@
-from utils import *
-from augmentation import *
-from scipy.ndimage.morphology import distance_transform_edt
+from utils import compute_correlogram, delete_loops, augmentation
 from scipy.spatial.distance import cdist
 from torchvision.models import vgg16
 from torch.nn import CosineSimilarity, MSELoss, Module
@@ -9,29 +7,16 @@ import torch.nn.functional as F
 from typing import List, Tuple
 from torchstain import MacenkoNormalizer
 import torch
+import cv2
+
 vgg16 = vgg16(pretrained=True)
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 from scipy.interpolate import CubicSpline
-from delete_loops import delete_loops
-from tqdm import tqdm 
+from tqdm import tqdm
 
 model = vgg16.features
-vgg16 = vgg16(pretrained=True)
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 
-
-def compute_correlogram(img, mask, bins_space, bins_digit_size):
-    corr = np.zeros((bins_space, bins_digit_size))
-    itf = distance_transform_edt(mask)
-    itf = itf / np.max(itf)
-    lin = np.linspace(0, 1, bins_digit_size + 1)
-    for i in range(bins_space):
-        levels = np.logical_and(itf > (i / bins_space), itf < ((i + 1) / bins_space))
-        without_zeros = img * levels
-        without_zeros = without_zeros[without_zeros > 0.0]
-        hist, _ = np.histogram(without_zeros, bins=lin, density=True)
-        corr[i] = hist
-    return corr
 
 
 class Isoline_to_features(Module):
@@ -200,18 +185,21 @@ class DAC:
         ]
 
     def interpolate(self, contour, n):
-        margin = n
-        top = contour[:margin]
-        bot = contour[-margin:]
-        contour_init_new = np.concatenate([bot, contour, top])
-        distance = np.cumsum(
-            np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
-        )
-        distance = np.insert(distance, 0, 0) / distance[-1]
+        try:
+            margin = n
+            top = contour[:margin]
+            bot = contour[-margin:]
+            contour_init_new = np.concatenate([bot, contour, top])
+            distance = np.cumsum(
+                np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
+            )
+            distance = np.insert(distance, 0, 0) / distance[-1]
 
-        indices = np.linspace(0, contour_init_new.shape[0] - 1, n).astype(int)
-        Cub = CubicSpline(distance[indices], contour_init_new[indices])
-        interp_contour = Cub(np.linspace(distance[margin], distance[-margin], n))
+            indices = np.linspace(0, contour_init_new.shape[0] - 1, n).astype(int)
+            Cub = CubicSpline(distance[indices], contour_init_new[indices])
+            interp_contour = Cub(np.linspace(distance[margin], distance[-margin], n))
+        except:
+            print(contour.shape)
 
         return interp_contour
 
@@ -257,9 +245,9 @@ class DAC:
         img, HE = self.normalizer.normalize(img, stains=True)
         img = img / 255
         HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        HE = ((HE, -clip_value, clip_value) + clip_value) / (2 * clip_value)
+        HE = np.clip(HE,0, clip_value) / clip_value
         mask = cv2.fillPoly(np.zeros(img.shape[:-1]), [coordinates], 1)
-        self.correlogram_anchor = compute_correlogram(HE, mask, len(self.isolines), 15)
+        self.correlogram_anchor = compute_correlogram(HE, mask, len(self.isolines), 20)
 
         with torch.no_grad():
             if augment == True:
@@ -357,7 +345,7 @@ class DAC:
         img, HE = self.normalizer.normalize(img, stains=True)
         img = img / 255
         HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        HE = ((HE, -clip_value, clip_value) + clip_value) / (2 * clip_value)
+        HE = np.clip(HE,0, clip_value) / clip_value
         #### Initialize variables
         self.dims = np.array(img.shape[:-1])
 
@@ -454,10 +442,11 @@ class DAC:
         mask = np.zeros(img.shape[:-1])
         mask = cv2.fillPoly(mask, [contours[argmin].astype(int)], 1)
 
-        self.correlogram = compute_correlogram(HE, mask, len(self.isolines), 15)
+        self.correlogram = compute_correlogram(HE, mask, len(self.isolines), 20)
         score_correlogram = np.mean(
             np.sum(np.minimum(self.correlogram, self.correlogram_anchor), axis=-1)
             / np.sum(np.maximum(self.correlogram, self.correlogram_anchor), axis=-1)
         )
         score = np.append(score, [score_correlogram])
+
         return contours, score, tots, energies
