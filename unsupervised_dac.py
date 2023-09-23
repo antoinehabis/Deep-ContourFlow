@@ -170,7 +170,7 @@ class DAC:
     def predict(self, img, contour_init):
         
         img = img/255
-        self.dims = np.array(img.shape[:-1])
+        self.dims = np.array(np.flip(img.shape[:-1]))
         scale = torch.tensor(
             [512.0, 512.0], device="cuda", dtype=torch.float32
         ) / torch.tensor(self.dims.copy(), device="cuda", dtype=torch.float32)
@@ -203,7 +203,7 @@ class DAC:
         scores = np.zeros((self.n_epochs, len(self.shapes)))
         contours = np.zeros((self.n_epochs, self.nb_points, 2))
 
-        contour_init = contour_init / np.flip(self.dims)
+        contour_init = contour_init / self.dims
         tensor = torch.tensor(
             np.transpose(img.astype(np.float32), (-1, 0, 1)).copy(), device="cuda"
         )

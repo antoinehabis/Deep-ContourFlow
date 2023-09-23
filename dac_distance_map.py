@@ -8,6 +8,8 @@ from typing import List, Tuple
 from torchstain import MacenkoNormalizer
 import torch
 import cv2
+import numpy as np
+from scipy.ndimage.morphology import distance_transform_edt
 
 vgg16 = vgg16(pretrained=True)
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
@@ -164,9 +166,9 @@ class DAC:
         self.glcm_anchor = None
         self.features_anchor_mask = None
         self.features_mask = None
-        self.correlogram_anchor = None
+        # self.correlogram_anchor = None
         self.weights = torch.tensor([weights, (1 - weights)], device="cuda")
-        self.correlogram = None
+        # self.correlogram = None
 
     def define_kernel(self):
         mil = self.gaussian_sigma * 10 // 2
@@ -241,13 +243,13 @@ class DAC:
         return ret, torch.unsqueeze(out0, dim=0)
 
     def fit(self, img, coordinates, augment=True):
-        clip_value = 3
-        img, HE = self.normalizer.normalize(img, stains=True)
+        # clip_value = 3
+        img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
-        HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        HE = np.clip(HE,0, clip_value) / clip_value
+        # HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
+        # HE = np.clip(HE,0, clip_value) / clip_value
         mask = cv2.fillPoly(np.zeros(img.shape[:-1]), [coordinates], 1)
-        self.correlogram_anchor = compute_correlogram(HE, mask, len(self.isolines), 20)
+        # self.correlogram_anchor = compute_correlogram(HE, mask, len(self.isolines), 15)
 
         with torch.no_grad():
             if augment == True:
@@ -341,11 +343,13 @@ class DAC:
         return tot, energies
 
     def predict(self, img, contour_init):
-        clip_value = 3
-        img, HE = self.normalizer.normalize(img, stains=True)
+        
+        # clip_value = 3
+        img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
-        HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        HE = np.clip(HE,0, clip_value) / clip_value
+        # HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
+        # HE = np.clip(HE,0, clip_value) / clip_value
+        
         #### Initialize variables
         self.dims = np.array(img.shape[:-1])
 
@@ -442,11 +446,11 @@ class DAC:
         mask = np.zeros(img.shape[:-1])
         mask = cv2.fillPoly(mask, [contours[argmin].astype(int)], 1)
 
-        self.correlogram = compute_correlogram(HE, mask, len(self.isolines), 20)
-        score_correlogram = np.mean(
-            np.sum(np.minimum(self.correlogram, self.correlogram_anchor), axis=-1)
-            / np.sum(np.maximum(self.correlogram, self.correlogram_anchor), axis=-1)
-        )
-        score = np.append(score, [score_correlogram])
+        # self.correlogram = compute_correlogram(HE, mask, len(self.isolines), 15)
+        # score_correlogram = np.mean(
+        #     np.sum(np.minimum(self.correlogram, self.correlogram_anchor), axis=-1)
+        #     / np.sum(np.maximum(self.correlogram, self.correlogram_anchor), axis=-1)
+        # )
+        # score = np.append(score, [score_correlogram])
 
         return contours, score, tots, energies

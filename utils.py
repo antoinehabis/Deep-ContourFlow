@@ -7,14 +7,14 @@ from scipy.interpolate import interp1d
 from histolab.slide import Slide
 import numpy as np
 import cv2
-from scipy.ndimage import binary_closing, binary_opening
+from scipy.ndimage import binary_closing, binary_dilation, binary_erosion
 from skimage.morphology import disk
 from scipy.ndimage.morphology import distance_transform_edt
 
 
 
 def row_to_filename(row):
-    filename = row.image.split(".")[0] + "_" + str(row.id) + ".tif"
+    filename = row.slide.split(".")[0] + "_" + str(row.id) + ".tif"
     return filename
 
 def find_thresh(filename, percentile):
@@ -35,6 +35,13 @@ def row_to_coordinates(row):
     string = string.replace(" ", ",")
     coordinates = np.array(eval(string))
     return coordinates, class_
+
+def preprocess_contour(contour_init,
+                       img):
+    img = cv2.fillPoly(np.zeros(img.shape[:-1]), [contour_init.astype(int)], 1)
+    img = binary_closing(img,disk(5))      
+    contour_init = np.squeeze(cv2.findContours(img.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0])
+    return contour_init
 
 
 def process_coord_get_image(coord, im, margin=100):
@@ -86,16 +93,20 @@ import numpy as np
 from scipy.ndimage.morphology import distance_transform_edt
 
 
-def compute_correlogram(img, mask, bins_space, bins_digit_size):
+def compute_correlogram(img,
+                        mask,
+                        bins_space,
+                        bins_digit_size):
     corr = np.zeros((bins_space, bins_digit_size))
     itf = distance_transform_edt(mask)
-    itf = itf / np.max(itf)
-    lin = np.linspace(0, 1, bins_digit_size + 1)
-    for i in range(bins_space):
-        levels = np.logical_and(itf > (i / bins_space), itf < ((i + 1) / bins_space))
+    itf = itf/np.max(itf)
+    lin = np.arange(0,1 + 1/bins_space,1/bins_space)
+    lin2 = np.linspace(1e-2,1,bins_digit_size+1)
+    for i in range(len(lin)-1):
+        levels = np.logical_and(itf >lin[i], itf<lin[i+1])
         without_zeros = img * levels
-        without_zeros = without_zeros[without_zeros > 0.0]
-        hist, _ = np.histogram(without_zeros, bins=lin, density=True)
+        without_zeros = without_zeros[without_zeros>0.]
+        hist,_ = np.histogram(without_zeros, bins = lin2, density=True)
         corr[i] = hist
     return corr
 
@@ -126,21 +137,23 @@ def augmentation(img, mask):
     img = img / 255
     return img, mask
 
-    
 def delete_loops(contour,
-                 shape):
-    
+                shape):
+
     contour = (contour*shape).astype(int)
     zeros = np.zeros(shape)
     new_img = cv2.fillPoly(zeros,[contour],1)
-    new_img = binary_opening(new_img,disk(2))
-    label_=  label(new_img,connectivity=1)
+    new_img = binary_erosion(new_img,disk(1))
+    label_=  label(new_img)
+
     uniques, counts = np.unique(label_,
                                 return_counts = True)
-    biggest = uniques[np.argsort(counts)[-2]]
-    contour = np.squeeze(cv2.findContours((label_ == biggest).astype(int), 
+    biggest = uniques[np.argsort(counts)]
+    biggest = biggest[biggest!=0][-1]
+    dilation  = (label_ == biggest).astype(int)
+    contour = np.squeeze(cv2.findContours(dilation, 
                 method = cv2.RETR_TREE,
                 mode=cv2.CHAIN_APPROX_SIMPLE,
                 )[0][0])/shape
-    
+
     return contour

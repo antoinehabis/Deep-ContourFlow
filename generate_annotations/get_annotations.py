@@ -64,7 +64,7 @@ with Cytomine(host=host, public_key=pb_key, private_key=pv_key) as cytomine:
     annotations.fetch()
 
 df = pd.DataFrame(
-    columns=["id", "image", "project", "term", "area", "perimeter", "location"]
+    columns=["id", "slide", "project", "term", "area", "perimeter", "location"]
 )
 
 for annotation in annotations:
@@ -72,7 +72,7 @@ for annotation in annotations:
         df = df.append(
             {
                 "id": annotation.id,
-                "image": dic_id_img[annotation.image],
+                "slide": dic_id_img[annotation.image],
                 "project": annotation.project,
                 "term": terms_dict[annotation.term[0]],
                 "area": annotation.area,
@@ -81,19 +81,4 @@ for annotation in annotations:
             },
             ignore_index=True,
         )
-df = df[
-    ~df["image"].isin(
-        [
-            "20077.svs",
-            "20214.svs",
-            "20209.svs",
-            "20211.svs",
-            "20180.svs",
-            "20189.svs",
-            "20215.svs",
-            "20119.svs",
-            "20185.svs",
-        ]
-    )
-]
 df.to_csv(os.path.join(path_annotations, "annotations.csv"))
