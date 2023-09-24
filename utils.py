@@ -10,6 +10,7 @@ import cv2
 from scipy.ndimage import binary_closing, binary_dilation, binary_erosion
 from skimage.morphology import disk
 from scipy.ndimage.morphology import distance_transform_edt
+from isect_segments_bentley_ottmann import poly_point_isect
 
 
 
@@ -89,9 +90,6 @@ def interpolate(shape, n):
 
     return shape
 
-import numpy as np
-from scipy.ndimage.morphology import distance_transform_edt
-
 
 def compute_correlogram(img,
                         mask,
@@ -137,23 +135,25 @@ def augmentation(img, mask):
     img = img / 255
     return img, mask
 
-def delete_loops(contour,
-                shape):
 
-    contour = (contour*shape).astype(int)
-    zeros = np.zeros(shape)
-    new_img = cv2.fillPoly(zeros,[contour],1)
-    new_img = binary_erosion(new_img,disk(1))
-    label_=  label(new_img)
+def delete_loops(contour):
+    contour = contour
+    tuples = poly_point_isect.isect_polygon_include_segments(contour)
+    if len(tuples)>0:
+        indices = np.arange(contour.shape[0])
+        for isect, segment in tuples:
+            index1 = np.where(np.all(contour == segment[0][0], axis=-1))[0][0]
+            index2 = np.where(np.all(contour == segment[1][0], axis=-1))[0][0]
+            min_index = np.minimum(index1,index2)
+            max_index = np.maximum(index1,index2)
 
-    uniques, counts = np.unique(label_,
-                                return_counts = True)
-    biggest = uniques[np.argsort(counts)]
-    biggest = biggest[biggest!=0][-1]
-    dilation  = (label_ == biggest).astype(int)
-    contour = np.squeeze(cv2.findContours(dilation, 
-                method = cv2.RETR_TREE,
-                mode=cv2.CHAIN_APPROX_SIMPLE,
-                )[0][0])/shape
-
+            if np.abs(index1 - index2) / contour.shape[0] < 0.5:
+                new_indices = np.concatenate(
+                    [np.arange(min_index), np.arange(max_index, contour.shape[0])]
+                )
+            else:
+                new_indices = np.concatenate([np.arange(min_index+1, max_index-1)])
+            indices = np.intersect1d(indices, new_indices)
+        contour = contour[indices]
+    contour = contour
     return contour

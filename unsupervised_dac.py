@@ -7,6 +7,8 @@ from torchvision import transforms
 import torch.nn.functional as F
 from typing import List, Tuple
 import torch
+from scipy.interpolate import CubicSpline
+
 vgg16 = models.vgg16(pretrained=True)
 model = vgg16.features
 model.cuda()
@@ -20,7 +22,6 @@ class Mask_to_features(Module):
         self.shapes = shapes
 
     def forward(self, activations: dict, mask: torch.tensor):
-
         mask0 = F.interpolate(
             mask, size=(self.shapes["0"][2], self.shapes["0"][3]), mode="bilinear"
         )
@@ -95,8 +96,8 @@ class DAC:
         self.kernel = self.define_kernel()
 
     def define_kernel(self):
-        mil = self.gaussian_sigma * 10 // 2
-        filter = np.arange(self.gaussian_sigma * 10) - mil
+        mil = self.gaussian_sigma * 3 // 2
+        filter = np.arange(self.gaussian_sigma * 3) - mil
         x = np.exp((-1 / 2) * (filter**2) / (2 * (self.gaussian_sigma) ** 2))
 
         return torch.tensor(x / np.sum(x), device="cuda", dtype=torch.float32)
@@ -110,7 +111,24 @@ class DAC:
             :, margin:-margin
         ]
 
-    def interpolate(self, contour, n, margin=20):
+    # def interpolate(self, contour, n, margin=20):
+    #     top = contour[:margin]
+    #     bot = contour[-margin:]
+    #     contour_init_new = np.concatenate([bot, contour, top])
+    #     distance = np.cumsum(
+    #         np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
+    #     )
+    #     distance = np.insert(distance, 0, 0) / distance[-1]
+    #     alpha = np.linspace(distance[margin], distance[-margin], n)
+
+    #     interp_contour = interp1d(distance, contour_init_new, kind="linear", axis=0)(
+    #         alpha
+    #     )
+
+    #     return interp_contour
+
+    def interpolate(self, contour, n):
+        margin = n
         top = contour[:margin]
         bot = contour[-margin:]
         contour_init_new = np.concatenate([bot, contour, top])
@@ -118,11 +136,10 @@ class DAC:
             np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
         )
         distance = np.insert(distance, 0, 0) / distance[-1]
-        alpha = np.linspace(distance[margin], distance[-margin], n)
 
-        interp_contour = interp1d(distance, contour_init_new, kind="linear", axis=0)(
-            alpha
-        )
+        indices = np.linspace(0, contour_init_new.shape[0] - 1, n).astype(int)
+        Cub = CubicSpline(distance[indices], contour_init_new[indices])
+        interp_contour = Cub(np.linspace(distance[margin], distance[-margin], n))
 
         return interp_contour
 
@@ -135,7 +152,7 @@ class DAC:
 
     def contour_to_mask(self, contour):
         eps = 1e-7
-        k = 1e5
+        k = 1e4
 
         contours = torch.unsqueeze(contour, dim=0)
         diff = -self.mesh + contours
@@ -157,19 +174,20 @@ class DAC:
     def forward_on_epoch(self, contour):
         mask = self.contour_to_mask(contour)
         features_inside, features_outside = self.mtf(self.activations, mask)
-        arr0 = torch.tensor([1.0, 1/2., 1/4., 1/8., 1/16.], device="cuda")
+        arr0 = torch.tensor([1.0, 1.0, 1.0, 1.0, 1.0], device="cuda")
         energies = torch.zeros(len(self.shapes)).cuda()
         arr = arr0 / torch.sum(arr0)
         for j in range(len(features_inside)):
-            energies[j] = torch.mean(
-                torch.exp(-((features_inside[j] - features_outside[j]) ** 2))
+            energies[j] = (
+                -torch.norm(features_inside[j] - features_outside[j])
+                / features_inside[j].shape[0]
             )
+
         fin = torch.sum(energies * arr0)
         return fin
 
     def predict(self, img, contour_init):
-        
-        img = img/255
+        img = img / 255
         self.dims = np.array(np.flip(img.shape[:-1]))
         scale = torch.tensor(
             [512.0, 512.0], device="cuda", dtype=torch.float32
@@ -227,16 +245,22 @@ class DAC:
 
             with torch.no_grad():
                 gradient_direction = contour.grad * clipped_norm / norm_grad
-                gradient_direction = self.convolve(gradient_direction.to(torch.float32), self.kernel).T
+                gradient_direction = self.convolve(
+                    gradient_direction.to(torch.float32), self.kernel
+                ).T
                 contour = (
                     contour
                     - scale * self.learning_rate * (self.ed**i) * gradient_direction
                 )
                 contour = contour.cpu().detach().numpy()
-                contour = delete_loops(contour,self.dims)
+                try:
+                    contour_without_loops = delete_loops(contour)
+                except:
+                    contour_without_loops = contour
                 interpolated_contour = self.interpolate(
-                    contour, n=self.nb_points
+                    contour_without_loops, n=self.nb_points
                 ).astype(np.float32)
+
             contour = torch.from_numpy(interpolated_contour).cuda()
             contour.grad = None
             contour.requires_grad = True

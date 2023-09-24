@@ -343,7 +343,7 @@ class DAC:
         return tot, energies
 
     def predict(self, img, contour_init):
-        
+
         # clip_value = 3
         img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
@@ -415,7 +415,9 @@ class DAC:
                     interpolated_contour = self.interpolate(
                         contour, n=self.nb_points
                     ).astype(np.float32)
+                contour = delete_loops(contour,self.dims)
                 contour = torch.from_numpy(interpolated_contour).cuda()
+                # contour = delete_loops(contour,self.dims)
                 contour.grad = None
                 contour.requires_grad = True
 
