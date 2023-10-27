@@ -178,7 +178,7 @@ class DAC:
         return torch.tensor(x / np.sum(x), device="cuda", dtype=torch.float32)
 
     def convolve(self, x):
-        margin = int(100)
+        margin = int(self.nb_points)
         top = x[:margin]
         bot = x[-margin:]
         out = torch.concatenate([bot, x, top]).T[:, None]
@@ -326,7 +326,7 @@ class DAC:
         score = torch.zeros(len(self.shapes), device="cuda")
         energies = torch.zeros((len(self.shapes), len(self.isolines)))
         arr0 = torch.tensor(
-            [1.0, 1 / 2, 1 / 4.0, 1 / 8.0, 1 / 16.0], device="cuda", dtype=torch.float32
+            [1/(2)**i for i in range(5)], device="cuda", dtype=torch.float32
         )
         arr = arr0 / torch.sum(arr0)
 
@@ -412,12 +412,15 @@ class DAC:
                         * gradient_direction
                     )
                     contour = contour.cpu().detach().numpy()
-                    interpolated_contour = self.interpolate(
+   
+                # try:
+                #     contour = delete_loops(contour)
+                # except:
+                #     pass
+                interpolated_contour = self.interpolate(
                         contour, n=self.nb_points
                     ).astype(np.float32)
-                contour = delete_loops(contour,self.dims)
                 contour = torch.from_numpy(interpolated_contour).cuda()
-                # contour = delete_loops(contour,self.dims)
                 contour.grad = None
                 contour.requires_grad = True
 

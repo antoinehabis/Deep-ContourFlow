@@ -1,0 +1,7 @@
+folder_images_paper/
+Cytomine-python-client/
+cytomine/
+generate_annotations/delete_annotations.py
+generate_annotations/get_annotations.py
+*.out
+*.mp4

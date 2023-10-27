@@ -49,4 +49,5 @@ for filename in filenames:
         tifffile.imsave(os.path.join(path_masks, filename), mask)
         tifffile.imsave(os.path.join(path_images, filename), img)
         coordinates_start[filename] = interpolate(contour_init, 100)
+        
 np.save(os.path.join(path_data, "contour_init.npy"), coordinates_start)

@@ -137,7 +137,6 @@ def augmentation(img, mask):
 
 
 def delete_loops(contour):
-    contour = contour
     tuples = poly_point_isect.isect_polygon_include_segments(contour)
     if len(tuples)>0:
         indices = np.arange(contour.shape[0])
@@ -155,5 +154,4 @@ def delete_loops(contour):
                 new_indices = np.concatenate([np.arange(min_index+1, max_index-1)])
             indices = np.intersect1d(indices, new_indices)
         contour = contour[indices]
-    contour = contour
     return contour

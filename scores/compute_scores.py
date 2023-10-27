@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
 from dac_distance_map import DAC
@@ -40,8 +41,7 @@ all_filenames = np.unique(list(annotations["slide"]))
 filenames_to_process = list(set(all_filenames) - set(slides_already_processed))
 
 
-
-def compute_scores_filename(filename,df):
+def compute_scores_filename(filename, df):
     annotations = pd.read_csv(
         os.path.join(path_annotations, "annotations.csv"), index_col=0
     )
@@ -57,17 +57,18 @@ def compute_scores_filename(filename,df):
     annotations_support = annotations_support.sample(frac=1).head(10)
 
     for index0, row0 in annotations_support.iterrows():
-
-        dac = DAC(nb_points = 100,
-            n_epochs = 200,
-            nb_augment = 100,
-            isolines = np.array([0., 1.]),
-            learning_rate = 5e-2,
-            clip = 1e-1,
-            sigma = 5,
-            weights = 0.9,
-            exponential_decay = 1.,
-            thresh = 1e-2)
+        dac = DAC(
+            nb_points=100,
+            n_epochs=300,
+            nb_augment=100,
+            isolines=np.array([0.0, 1.0]),
+            learning_rate=5e-2,
+            clip=1e-1,
+            sigma=5,
+            weights=0.9,
+            exponential_decay=0.999,
+            thresh=1e-2,
+        )
 
         filename_img_support = row_to_filename(row0)
 
@@ -122,9 +123,10 @@ def compute_scores_filename(filename,df):
 
             dice = np.array(list(df["DICE(%)"]))
             gt = np.array(list(df["gt"]))
-
             print(str(np.sum(dice * gt) / np.sum(gt)))
     df.to_csv(os.path.join(path_scores, "scores.csv"))
 
+    return df
+
 for filename in tqdm(filenames_to_process):
-    compute_scores_filename(filename,df)
+    df = compute_scores_filename(filename, df)
