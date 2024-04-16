@@ -1,4 +1,4 @@
-from utils import compute_correlogram, delete_loops, augmentation
+from utils import delete_loops, augmentation
 from scipy.spatial.distance import cdist
 from torchvision.models import vgg16
 from torch.nn import CosineSimilarity, MSELoss, Module
@@ -166,9 +166,7 @@ class DAC:
         self.glcm_anchor = None
         self.features_anchor_mask = None
         self.features_mask = None
-        # self.correlogram_anchor = None
         self.weights = torch.tensor([weights, (1 - weights)], device="cuda")
-        # self.correlogram = None
 
     def define_kernel(self):
         mil = self.gaussian_sigma * 10 // 2
@@ -201,7 +199,7 @@ class DAC:
             Cub = CubicSpline(distance[indices], contour_init_new[indices])
             interp_contour = Cub(np.linspace(distance[margin], distance[-margin], n))
         except:
-            print(contour.shape)
+            pass
 
         return interp_contour
 
@@ -220,8 +218,8 @@ class DAC:
         return hook
 
     def contour_to_distance_map(self, contour):
-        eps = 1e-7
-        k = 1e4
+        eps = 1e-4
+        k = 1e5
         contour = torch.unsqueeze(contour, dim=0)
         diff = -self.mesh + contour
         min_diff = torch.min(torch.norm(diff, dim=-1), dim=1)[0]
@@ -243,13 +241,9 @@ class DAC:
         return ret, torch.unsqueeze(out0, dim=0)
 
     def fit(self, img, coordinates, augment=True):
-        # clip_value = 3
         img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
-        # HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        # HE = np.clip(HE,0, clip_value) / clip_value
         mask = cv2.fillPoly(np.zeros(img.shape[:-1]), [coordinates], 1)
-        # self.correlogram_anchor = compute_correlogram(HE, mask, len(self.isolines), 15)
 
         with torch.no_grad():
             if augment == True:
@@ -344,12 +338,9 @@ class DAC:
 
     def predict(self, img, contour_init):
 
-        # clip_value = 3
         img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
-        # HE = HE.reshape(2, img.shape[0], img.shape[1])[0]
-        # HE = np.clip(HE,0, clip_value) / clip_value
-        
+
         #### Initialize variables
         self.dims = np.array(img.shape[:-1])
 
@@ -428,6 +419,7 @@ class DAC:
                 print("the algorithm stoped earlier")
                 break
 
+
         ##### Calculate score after gradient descent
         dst_map, mask = self.contour_to_distance_map(contour)
         _, self.features_mask = self.itf(self.activations, dst_map, mask)
@@ -450,12 +442,5 @@ class DAC:
 
         mask = np.zeros(img.shape[:-1])
         mask = cv2.fillPoly(mask, [contours[argmin].astype(int)], 1)
-
-        # self.correlogram = compute_correlogram(HE, mask, len(self.isolines), 15)
-        # score_correlogram = np.mean(
-        #     np.sum(np.minimum(self.correlogram, self.correlogram_anchor), axis=-1)
-        #     / np.sum(np.maximum(self.correlogram, self.correlogram_anchor), axis=-1)
-        # )
-        # score = np.append(score, [score_correlogram])
 
         return contours, score, tots, energies

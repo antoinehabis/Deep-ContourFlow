@@ -18,6 +18,30 @@ def row_to_filename(row):
     filename = row.slide.split(".")[0] + "_" + str(row.id) + ".tif"
     return filename
 
+
+def define_contour_init(img, center, axes, angle = 0):
+  # major, minor axes
+    start_angle = 0
+    end_angle = 360
+    color = 1
+    thickness = -1
+
+    # Draw a filled ellipse on the input image
+    mask = cv2.ellipse(
+        np.zeros(img.shape[:-1]),
+        center,
+        axes,
+        angle,
+        start_angle,
+        end_angle,
+        color,
+        thickness,
+    ).astype(np.uint8)
+    contour = np.squeeze(
+        cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0]
+    )
+    return contour, mask
+
 def find_thresh(filename, percentile):
     img = Slide(os.path.join(path_slides, filename), processed_path="")
     arr = img.resampled_array(scale_factor=4)
@@ -91,22 +115,6 @@ def interpolate(shape, n):
     return shape
 
 
-def compute_correlogram(img,
-                        mask,
-                        bins_space,
-                        bins_digit_size):
-    corr = np.zeros((bins_space, bins_digit_size))
-    itf = distance_transform_edt(mask)
-    itf = itf/np.max(itf)
-    lin = np.arange(0,1 + 1/bins_space,1/bins_space)
-    lin2 = np.linspace(1e-2,1,bins_digit_size+1)
-    for i in range(len(lin)-1):
-        levels = np.logical_and(itf >lin[i], itf<lin[i+1])
-        without_zeros = img * levels
-        without_zeros = without_zeros[without_zeros>0.]
-        hist,_ = np.histogram(without_zeros, bins = lin2, density=True)
-        corr[i] = hist
-    return corr
 
 
 def augmentation(img, mask):
@@ -138,6 +146,7 @@ def augmentation(img, mask):
 
 def delete_loops(contour):
     tuples = poly_point_isect.isect_polygon_include_segments(contour)
+
     if len(tuples)>0:
         indices = np.arange(contour.shape[0])
         for isect, segment in tuples:
