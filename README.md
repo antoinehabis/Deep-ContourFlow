@@ -1,10 +1,10 @@
 # Deep-Active-Contour
 
-In This repository you can find the code for both: unsupervised Deep Active Contour and One shot learning distance map Deep active contour.
+In This repository you can find the code for both: unsupervised Deep-ContourFlow and One shot learning Deep-ContourFlow.
 
-![alt text](./folder_images_paper/real_life_images.png)
-![alt text](./folder_images_paper/skin_lesions.png)
-![alt text](./folder_images_paper/tumor_region.png)
+![Alt text](./folder_images_paper/real_life_images.png "Unsupervised DCF: evolution of the contour on four real-life images when varying the initial contour")
+![Alt text](./folder_images_paper/skin_lesions.png "Unsupervised DCF: evolution of the contour on three skin lesions from Skin Cancer MNIST: HAM10000")
+![Alt text](./folder_images_paper/tumor_region.png "Unsupervised DCF: evolution of the contour on two histology images.")
 
 
 ## Unsupervised Deep Active Contour:
@@ -12,7 +12,7 @@ In This repository you can find the code for both: unsupervised Deep Active Cont
 To use Unsupervised DCF just add your image in ```images_test_unsupervised_dcf``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
 
 
-## One shot learning: Application on dilated Tubules
+## One shot learning: Application on Dilated Tubules
 
 To replicate the results in the paper ... follow the steps:
 
@@ -20,7 +20,7 @@ To replicate the results in the paper ... follow the steps:
 
 1. Register to AIDPATHDB using the link https://mitel.dimi.uniud.it/aidpath-db/app/login.php
 2. Donwload the kidney dataset of AIDPATHDB and put the images in ```slides```
-3. The manual annotations are available in the github in the ```annotations``` folder
+3. The manual annotations are available in the github in the ```generate_annotations``` folder
    
 ### 1. Extract images:
 
@@ -43,7 +43,7 @@ cd ./scores
 python compute_scores.py
 ```
 
-This code take 10 random dilated tubule in each slide and fit the One shot learning DAC and predict for all other object in the slide.
+This code take 10 random dilated tubule in each slide and fit the One shot learning DCF and predict for all other object in the slide.
 It creates a csv file containing all the scores.
 
 
