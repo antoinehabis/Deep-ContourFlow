@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+
 from utils import *
 from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
@@ -9,7 +15,6 @@ from typing import List, Tuple
 import torch
 from scipy.interpolate import CubicSpline
 import matplotlib.pyplot as plt
-from torch import autograd
 
 vgg16 = models.vgg16(pretrained=True)
 model = vgg16.features
@@ -47,15 +52,13 @@ class Mask_to_features(Module):
         for i in range(5):
             features_inside.append(
                 torch.sum(activations[str(i)] * masks[i], dim=(0, 2, 3))
-                / (torch.sum(masks[i], (0, 2, 3)) + 1e-5)
+                / torch.sum(masks[i], (0, 2, 3))
             )
 
             features_outside.append(
                 torch.sum(activations[str(i)] * (1 - masks[i]), dim=(0, 2, 3))
-                / (torch.sum((1 - masks[i]), (0, 2, 3)) + 1e-5)
+                / torch.sum((1 - masks[i]), (0, 2, 3))
             )
-
-
 
         return features_inside, features_outside
 
@@ -82,8 +85,7 @@ class DAC:
         exponential_decay=0.998,
         thresh=1e-2,
         weights = [1,1,1,1,1],
-        area_force=0.,
-        gaussian_sigma = 1
+        frame_force=0.
     ):
         super(DAC, self).__init__()
 
@@ -101,20 +103,21 @@ class DAC:
         self.shapes = {}
         self.ed = exponential_decay
         self.thresh = thresh
-        self.gaussian_sigma = gaussian_sigma
+        self.gaussian_sigma = 1.
         self.kernel = self.define_kernel()
-        self.lambda_area = area_force
+        self.out = None
         self.weights = weights
-    
+        self.frame_force = frame_force
+
     def define_kernel(self):
-        mil = self.gaussian_sigma * 10 * 1 // 2
+        mil = self.gaussian_sigma*10 * 1 // 2
         filter = np.arange(self.gaussian_sigma * 10) - mil
         x = np.exp((-1 / 2) * (filter**2) / (2 * (self.gaussian_sigma) ** 2))
 
         return torch.tensor(x / np.sum(x), device="cuda", dtype=torch.float32)
 
     def convolve(self, x):
-        margin = x.shape[0]//2
+        margin = x.shape[0]
         top = x[:margin]
         bot = x[-margin:]
         out = torch.concatenate([bot, x, top]).T[:, None]
@@ -130,11 +133,9 @@ class DAC:
         distance = np.cumsum(
             np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
         )
-        distance = np.insert(distance, 0, 0) / distance[-1]
-        boolean_equal = (np.roll(np.diff(distance,append=2),1)==0).astype(bool)
-        distance[boolean_equal] = distance[boolean_equal] + 1e-6
 
-        indices = np.linspace(0, contour_init_new.shape[0] - 1, 100).astype(int)
+        distance = np.insert(distance, 0, 0) / distance[-1]
+        indices = np.linspace(0, contour_init_new.shape[0] - 1, n).astype(int)
         indices = np.unique(indices)
 
         Cub = CubicSpline(distance[indices], contour_init_new[indices])
@@ -149,43 +150,42 @@ class DAC:
 
         return hook
 
-    def area_force(self, contour):
-        x, y  = contour[:,0], contour[:,1]
-        area = -0.5*torch.abs(torch.dot(x,torch.roll(y,1))-torch.dot(y,torch.roll(x,1)))
-        return area
-
     def contour_to_mask(self, contour):
         k = 1e5
-        eps = 1e-6
+        eps = 1e-5
         contours = torch.unsqueeze(contour, dim=0)
         diff = -self.mesh + contours
         roll_diff = torch.roll(diff, -1, dims=1)
         sign = diff * torch.roll(roll_diff, 1, dims=2)
         sign = sign[:, :, 1] - sign[:, :, 0]
         sign = torch.tanh(k * sign)
-        norm_diff = torch.linalg.vector_norm(diff, dim=2)
-        norm_roll = torch.linalg.vector_norm(roll_diff, dim=2)
+        norm_diff = torch.norm(diff, dim=2)
+        norm_roll = torch.norm(roll_diff, dim=2)
         scalar_product = torch.sum(diff * roll_diff, dim=2)
-        clip = torch.clamp(scalar_product / (norm_diff * norm_roll ),-1 + eps, 1 - eps)
-        angles = torch.acos(clip)
+        clip = scalar_product / (norm_diff * norm_roll + eps)
+        angles = torch.arccos(torch.clip(clip,-1+ eps, 1-eps))
         torch.pi = torch.acos(torch.zeros(1)).item() * 2
-        sum_angles = torch.clamp(-torch.sum(sign * angles, dim=1) / (2 * torch.pi), 0, 1)
+        sum_angles = torch.clip(-torch.sum(sign * angles, dim=1) / (2 * torch.pi),0,1)
         out0 = sum_angles.reshape(1, self.shapes["2"][2], self.shapes["2"][3])
         mask = torch.unsqueeze(out0, dim=0)
-        area_force = self.area_force(contour)
-        return mask, area_force
+        minimum,_ = torch.min(torch.minimum(contour, 1-contour),dim=-1)
+        length = torch.mean(1/torch.sqrt(minimum) + 1e-3)
+        return mask, length
+    
+    def forward_on_epoch(self, contour, first_epoch=False):
+            mask, area_force = self.contour_to_mask(contour)
+            features_inside, features_outside = self.mtf(self.activations, mask)
+            
+            if first_epoch:
+                self.out = features_outside
+            arr0 = torch.tensor(self.weights, device="cuda")
+            energies = torch.zeros(len(self.shapes)).cuda()
+            arr = arr0 / torch.sum(arr0)
 
-    def forward_on_epoch(self, contour,epoch):
-        mask, area_force = self.contour_to_mask(contour)
-        features_inside, features_outside = self.mtf(self.activations, mask)
-
-        arr0 = torch.tensor(self.weights, device="cuda")
-        energies = torch.zeros(len(self.shapes)).cuda()
-        arr = arr0 / torch.sum(arr0)
-        for j in range(len(features_inside)):
-            energies[j] = -torch.linalg.vector_norm(torch.clamp((features_inside[j] - features_outside[j])/(torch.mean(self.activations[str(j)], dim=(0, 2, 3))+1e-6),1e-6),2)
-        fin = torch.sum(energies * arr0)
-        return fin + self.lambda_area*area_force
+            for j in range(len(features_inside)):
+                energies[j] = -torch.linalg.vector_norm(torch.clamp((features_inside[j] - self.out[j])/(torch.mean(self.activations[str(j)], dim=(0, 2, 3))+1e-6),1e-6),2)
+            fin = torch.sum(energies * arr0)
+            return fin + self.lambda_area*area_force
 
     def predict(self, img, contour_init):
         img = img / 255
@@ -237,19 +237,17 @@ class DAC:
         contour.requires_grad = True
 
         for i in range(self.n_epochs):
-            with autograd.detect_anomaly():
+            tot= self.forward_on_epoch(contour, first_epoch=i == 0)
+            tots[i] = tot
+            tot.backward(inputs=contour)
 
-                tot = self.forward_on_epoch(contour,i+1)
-                tots[i] = tot
-                tot.backward(inputs=contour)
-
-            norm_grad = torch.unsqueeze(torch.linalg.vector_norm(contour.grad, dim=1), -1)
+            norm_grad = torch.unsqueeze(torch.norm(contour.grad, dim=1), -1)
             stop = torch.max(norm_grad) < self.thresh
             contours.append(contour.cpu().detach().numpy())
             if stop == False:
                 with torch.no_grad():
-                    clipped_norm = torch.clamp(norm_grad, 0., self.clip)
-                    gradient_direction = contour.grad * clipped_norm / (norm_grad +1e-5)
+                    clipped_norm = torch.clip(norm_grad, 0., self.clip) 
+                    gradient_direction = contour.grad * clipped_norm / norm_grad
                     gradient_direction = self.convolve(
                         gradient_direction.to(torch.float32)
                     ).T
@@ -280,8 +278,9 @@ class DAC:
                 )
                 contour.grad = None
                 contour.requires_grad = True
+
             else:
-                print("the algorithm stopped earlier")
+                print('the algorithm stopped earlier')
                 break
 
         contours = np.roll(np.array(contours), 1, -1)

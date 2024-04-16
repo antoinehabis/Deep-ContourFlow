@@ -1,5 +1,5 @@
 from config import *
-from Deep_active_contourV2 import DAC
+from algorithms.dcf_distance_map import DCF
 from utils import *
 from scipy.ndimage import binary_dilation
 import pandas as pd
@@ -51,7 +51,7 @@ for filename in tqdm(filenames_to_process):
 
     for index0, row0 in annotations_anchor.iterrows():
 
-        dac = DAC(nb_points = 100,
+        dac = DCF(nb_points = 100,
                   n_epochs = 200,
                   nb_augment = 100,
                   isolines = np.array([0., 1.]),

@@ -5,7 +5,6 @@ from __future__ import unicode_literals
 
 from config import *
 import logging
-
 import sys
 from argparse import ArgumentParser
 from shapely import wkt

@@ -1,3 +1,7 @@
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 from utils import delete_loops, augmentation
 from scipy.spatial.distance import cdist
 from torchvision.models import vgg16
@@ -109,7 +113,7 @@ preprocess = transforms.Compose(
 cos = CosineSimilarity(dim=0, eps=1e-08).cuda()
 
 
-class DAC:
+class DCF:
     def __init__(
         self,
         nb_points=100,
@@ -125,7 +129,7 @@ class DAC:
         thresh=1e-2,
         weights=0.9,
     ):
-        super(DAC, self).__init__()
+        super(DCF, self).__init__()
 
         self.nb_points = nb_points
         self.n_epochs = n_epochs
