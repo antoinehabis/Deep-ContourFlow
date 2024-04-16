@@ -5,4 +5,4 @@ generate_annotations/delete_annotations.py
 generate_annotations/get_annotations.py
 *.out
 *.mp4
-scores/analyze_score.ipynb
+analyze_score.ipynb

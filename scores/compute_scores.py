@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
-from dac_distance_map import DAC
+from algorithms.dcf_distance_map import DCF
 from utils import row_to_coordinates, row_to_filename, preprocess_contour
 from tqdm import tqdm
 import pandas as pd
@@ -57,7 +57,7 @@ def compute_scores_filename(filename, df):
     annotations_support = annotations_support.sample(frac=1).head(10)
 
     for index0, row0 in annotations_support.iterrows():
-        dac = DAC(
+        dcf = DCF(
             nb_points=100,
             n_epochs=300,
             nb_augment=100,
@@ -82,7 +82,7 @@ def compute_scores_filename(filename, df):
             )[0][0]
         )
 
-        dac.fit(img_support, contour_support, augment=True)
+        dcf.fit(img_support, contour_support, augment=True)
 
         for index1, row1 in annotations.iterrows():
             filename_img = row_to_filename(row1)
@@ -91,7 +91,7 @@ def compute_scores_filename(filename, df):
             contour_init = contour_inits[filename_img]
 
             C0 = preprocess_contour(contour_init, img)
-            shape_fin, score, tots, energies = dac.predict(img, C0)
+            shape_fin, score, tots, energies = dcf.predict(img, C0)
 
             x = np.argmin(tots)
 
