@@ -15,8 +15,7 @@ from shapely.geometry import Point, box
 
 from cytomine import Cytomine
 from cytomine.models import Property, Annotation, AnnotationTerm, AnnotationCollection
-
-__author__ = "Rubens Ulysse <urubens@uliege.be>"
+import os
 
 logging.basicConfig()
 logger = logging.getLogger("cytomine.client")
@@ -24,9 +23,9 @@ logger.setLevel(logging.INFO)
 
 
 def delete_annotations(id_image, id_project):
-    pb_key = "d6081ae5-ba45-4e52-bf37-791adcba141d"
-    pv_key = "23a5bdd8-e7c8-4546-a560-cf341a92fe8e"
-    host = "https://bigpicture.demo.cytomine.com/"
+    pb_key = os.getenv('CYTOMINE_PUBLIC')
+    pv_key = os.getenv('CYTOMINE_PRIVATE')
+    host = os.getenv('CYTOMINE_HOST')
 
     with Cytomine(host=host, public_key=pb_key, private_key=pv_key) as cytomine:
         # Get the list of annotations

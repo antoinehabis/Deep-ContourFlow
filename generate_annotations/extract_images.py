@@ -23,7 +23,7 @@ annotations = pd.read_csv(
 )
 n = annotations.shape[0]
 annotations = annotations.replace(["dilated_tubule", "fake_tubule"], [1, 0])
-print(annotations.columns)
+
 filenames = np.unique(list(annotations["slide"]))
 
 coordinates_start = {}

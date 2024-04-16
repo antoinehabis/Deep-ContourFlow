@@ -19,22 +19,21 @@ from cytomine import Cytomine
 from cytomine.models import AnnotationCollection, ImageInstanceCollection
 from cytomine.models import TermCollection
 
-__author__ = "Rubens Ulysse <urubens@uliege.be>"
 
 
 def get_by_id(haystack, needle):
     return next((item for item in haystack if item.id == needle), None)
 
 
-pb_key = "d6081ae5-ba45-4e52-bf37-791adcba141d"
-pv_key = "23a5bdd8-e7c8-4546-a560-cf341a92fe8e"
-host = "https://bigpicture.demo.cytomine.com/"
+pb_key = os.getenv('CYTOMINE_PUBLIC')
+pv_key = os.getenv('CYTOMINE_PRIVATE')
+host = os.getenv('CYTOMINE_HOST')
 
 logging.basicConfig()
 logger = logging.getLogger("cytomine.client")
 logger.setLevel(logging.INFO)
 
-project_id = "2578438"
+project_id = os.getenv('PROJECT_ID')
 
 with Cytomine(host=host, public_key=pb_key, private_key=pv_key) as cytomine:
     terms = TermCollection().fetch_with_filter("project", project_id)

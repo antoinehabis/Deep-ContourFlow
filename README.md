@@ -2,13 +2,14 @@
 
 In This repository you can find the code for both: unsupervised Deep Active Contour and One shot learning distance map Deep active contour.
 
-![alt text](./results_unsupervised_dac/flowers_evo.jpg)
-![alt text](./results_unsupervised_dac/pineaples_evo.jpg)
+![alt text](./folder_images_paper/real_life_images.png)
+![alt text](./folder_images_paper/skin_lesions.png)
+![alt text](./folder_images_paper/tumor_region.png)
 
 
 ## Unsupervised Deep Active Contour:
 
-To use UDAC just add your image in ```images_test_unsupervised_dac``` and run the algorithm using the notebook: ```unsupervised_dac.ipynb```
+To use Unsupervised DCF just add your image in ```images_test_unsupervised_dcf``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
 
 
 ## One shot learning: Application on dilated Tubules

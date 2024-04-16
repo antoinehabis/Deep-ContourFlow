@@ -6,7 +6,6 @@ import pandas as pd
 import tifffile
 from tqdm import tqdm 
 
-
 path_images = os.path.join(path_data,'images')
 path_masks = os.path.join(path_data,'masks')
 annotations = pd.read_csv(os.path.join(path_annotations,'annotations.csv'), index_col=0)
