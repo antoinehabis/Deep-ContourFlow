@@ -26,15 +26,13 @@ df = pd.DataFrame(columns = ['slide',
 #         df = df.read_csv('scores.csv', index_col=0)
 # except:
 #         pass
-
 slides_already_processed = list(np.unique(df['slide']))
 all_filenames = np.unique(list(annotations['image']))
 filenames_to_process = list(set(all_filenames) - set(slides_already_processed))
 
 def preprocess_contour(contour_init,
                        img,
-                       AREA_LIMIT = 10000):
-                       
+                       AREA_LIMIT = 10000):       
     img = cv2.fillPoly(np.zeros(img.shape[:-1]), [contour_init.astype(int)], 1)
     img = binary_closing(img,disk(5))      
     contour_init = np.squeeze(cv2.findContours(img.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0])
