@@ -2,7 +2,7 @@ Cytomine-python-client/
 cytomine/
 generate_annotations/delete_annotations.py
 generate_annotations/get_annotations.py
-*.out
-*.mp4
+**/*.out
+**/*.mp4
 analyze_score.ipynb
-__pycache__/
+**/__pycache__/
