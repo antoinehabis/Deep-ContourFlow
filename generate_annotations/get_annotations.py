@@ -45,11 +45,6 @@ with Cytomine(host=host, public_key=pb_key, private_key=pv_key) as cytomine:
     # We want all annotations in a given project.
     annotations = AnnotationCollection()
     annotations.project = project_id  # Add a filter: only annotations from this project
-    # You could add other filters:
-    # annotations.image = id_image => Add a filter: only annotations from this image
-    # annotations.images = list(dic_id_img.keys())
-    # annotations.user = id_user => Add a filter: only annotations from this user
-    # ...
     annotations.showWKT = True  # Ask to return WKT location (geometry) in the response
     annotations.showMeta = (
         True  # Ask to return meta information (id, ...) in the response

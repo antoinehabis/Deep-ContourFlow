@@ -5,16 +5,14 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 from utils import *
-from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
 import torchvision.models as models
 from torch.nn import MSELoss, Module
 from torchvision import transforms
 import torch.nn.functional as F
-from typing import List, Tuple
+from typing import Tuple
 import torch
 from scipy.interpolate import CubicSpline
-import matplotlib.pyplot as plt
 
 vgg16 = models.vgg16(pretrained=True)
 model = vgg16.features
@@ -151,6 +149,7 @@ class DAC:
         return hook
 
     def contour_to_mask(self, contour):
+
         k = 1e5
         eps = 1e-5
         contours = torch.unsqueeze(contour, dim=0)

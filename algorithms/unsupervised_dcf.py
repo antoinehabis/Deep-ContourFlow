@@ -4,23 +4,26 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from utils import *
-from scipy.ndimage.morphology import distance_transform_edt
 from scipy.spatial.distance import cdist
 import torchvision.models as models
 from torch.nn import MSELoss, Module
 from torchvision import transforms
 import torch.nn.functional as F
-from typing import List, Tuple
+from typing import  Tuple
 import torch
 from scipy.interpolate import CubicSpline
-import matplotlib.pyplot as plt
 from torch import autograd
+
+preprocess = transforms.Compose(
+    [
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ]
+)
+mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 
 vgg16 = models.vgg16(pretrained=True)
 model = vgg16.features
 model.cuda()
-
-mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 
 
 class Mask_to_features(Module):
@@ -60,20 +63,11 @@ class Mask_to_features(Module):
                 / (torch.sum((1 - masks[i]), (0, 2, 3)) + 1e-5)
             )
 
-
-
         return features_inside, features_outside
 
 
 multiscale = vgg16.features
 multiscale.cuda()
-
-
-preprocess = transforms.Compose(
-    [
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ]
-)
 
 
 class DCF:
@@ -86,9 +80,9 @@ class DCF:
         clip=1e-1,
         exponential_decay=0.998,
         thresh=1e-2,
-        weights = [1,1,1,1,1],
-        area_force=0.,
-        gaussian_sigma = 1
+        weights=[1, 1, 1, 1, 1],
+        area_force=0.0,
+        gaussian_sigma=1,
     ):
         super(DCF, self).__init__()
 
@@ -110,7 +104,7 @@ class DCF:
         self.kernel = self.define_kernel()
         self.lambda_area = area_force
         self.weights = weights
-    
+
     def define_kernel(self):
         mil = self.gaussian_sigma * 10 * 1 // 2
         filter = np.arange(self.gaussian_sigma * 10) - mil
@@ -119,7 +113,7 @@ class DCF:
         return torch.tensor(x / np.sum(x), device="cuda", dtype=torch.float32)
 
     def convolve(self, x):
-        margin = x.shape[0]//2
+        margin = x.shape[0] // 2
         top = x[:margin]
         bot = x[-margin:]
         out = torch.concatenate([bot, x, top]).T[:, None]
@@ -136,7 +130,7 @@ class DCF:
             np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
         )
         distance = np.insert(distance, 0, 0) / distance[-1]
-        boolean_equal = (np.roll(np.diff(distance,append=2),1)==0).astype(bool)
+        boolean_equal = (np.roll(np.diff(distance, append=2), 1) == 0).astype(bool)
         distance[boolean_equal] = distance[boolean_equal] + 1e-6
 
         indices = np.linspace(0, contour_init_new.shape[0] - 1, 100).astype(int)
@@ -155,8 +149,10 @@ class DCF:
         return hook
 
     def area_force(self, contour):
-        x, y  = contour[:,0], contour[:,1]
-        area = -0.5*torch.abs(torch.dot(x,torch.roll(y,1))-torch.dot(y,torch.roll(x,1)))
+        x, y = contour[:, 0], contour[:, 1]
+        area = -0.5 * torch.abs(
+            torch.dot(x, torch.roll(y, 1)) - torch.dot(y, torch.roll(x, 1))
+        )
         return area
 
     def contour_to_mask(self, contour):
@@ -171,16 +167,18 @@ class DCF:
         norm_diff = torch.linalg.vector_norm(diff, dim=2)
         norm_roll = torch.linalg.vector_norm(roll_diff, dim=2)
         scalar_product = torch.sum(diff * roll_diff, dim=2)
-        clip = torch.clamp(scalar_product / (norm_diff * norm_roll ),-1 + eps, 1 - eps)
+        clip = torch.clamp(scalar_product / (norm_diff * norm_roll), -1 + eps, 1 - eps)
         angles = torch.acos(clip)
         torch.pi = torch.acos(torch.zeros(1)).item() * 2
-        sum_angles = torch.clamp(-torch.sum(sign * angles, dim=1) / (2 * torch.pi), 0, 1)
+        sum_angles = torch.clamp(
+            -torch.sum(sign * angles, dim=1) / (2 * torch.pi), 0, 1
+        )
         out0 = sum_angles.reshape(1, self.shapes["2"][2], self.shapes["2"][3])
         mask = torch.unsqueeze(out0, dim=0)
         area_force = self.area_force(contour)
         return mask, area_force
 
-    def forward_on_epoch(self, contour,epoch):
+    def forward_on_epoch(self, contour, epoch):
         mask, area_force = self.contour_to_mask(contour)
         features_inside, features_outside = self.mtf(self.activations, mask)
 
@@ -188,12 +186,23 @@ class DCF:
         energies = torch.zeros(len(self.shapes)).cuda()
         arr = arr0 / torch.sum(arr0)
         for j in range(len(features_inside)):
-            energies[j] = -torch.linalg.vector_norm(torch.clamp((features_inside[j] - features_outside[j])/(torch.mean(self.activations[str(j)], dim=(0, 2, 3))+1e-6),1e-6),2)
+            energies[j] = -torch.linalg.vector_norm(
+                torch.clamp(
+                    (features_inside[j] - features_outside[j])
+                    / (torch.mean(self.activations[str(j)], dim=(0, 2, 3)) + 1e-6),
+                    1e-6,
+                ),
+                2,
+            )
         fin = torch.sum(energies * arr0)
-        return fin + self.lambda_area*area_force
+        return fin + self.lambda_area * area_force
 
     def predict(self, img, contour_init):
+
+        if img.dtype != "int32":
+            raise Exception("Image must be of type int32")
         img = img / 255
+
         self.dims = np.array(np.flip(img.shape[:-1]))
         scale = torch.tensor(
             [512.0, 512.0], device="cuda", dtype=torch.float32
@@ -221,9 +230,6 @@ class DCF:
         )
         self.mtf = Mask_to_features(self.shapes)
 
-        if img.dtype != "float64":
-            raise Exception("Image must be normalized between 0 and 1")
-
         stop = False
         tots = np.zeros((self.n_epochs))
         scores = np.zeros((self.n_epochs, len(self.shapes)))
@@ -244,26 +250,27 @@ class DCF:
         for i in range(self.n_epochs):
             with autograd.detect_anomaly():
 
-                tot = self.forward_on_epoch(contour,i+1)
+                tot = self.forward_on_epoch(contour, i + 1)
                 tots[i] = tot
                 tot.backward(inputs=contour)
 
-            norm_grad = torch.unsqueeze(torch.linalg.vector_norm(contour.grad, dim=1), -1)
+            norm_grad = torch.unsqueeze(
+                torch.linalg.vector_norm(contour.grad, dim=1), -1
+            )
             stop = torch.max(norm_grad) < self.thresh
             contours.append(contour.cpu().detach().numpy())
             if stop == False:
                 with torch.no_grad():
-                    clipped_norm = torch.clamp(norm_grad, 0., self.clip)
-                    gradient_direction = contour.grad * clipped_norm / (norm_grad +1e-5)
+                    clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
+                    gradient_direction = (
+                        contour.grad * clipped_norm / (norm_grad + 1e-5)
+                    )
                     gradient_direction = self.convolve(
                         gradient_direction.to(torch.float32)
                     ).T
                     contour = (
                         contour
-                        - scale
-                        * self.learning_rate
-                        * (self.ed**i)
-                        * gradient_direction
+                        - scale * self.learning_rate * (self.ed**i) * gradient_direction
                     )
                     contour = contour.cpu().detach().numpy()
                     try:

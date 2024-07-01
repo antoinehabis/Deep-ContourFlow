@@ -2,7 +2,8 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-from utils import delete_loops, augmentation
+from utils import augmentation
+from utils_dilated_tubules import *
 from scipy.spatial.distance import cdist
 from torchvision.models import vgg16
 from torch.nn import CosineSimilarity, MSELoss, Module
@@ -245,6 +246,9 @@ class DCF:
         return ret, torch.unsqueeze(out0, dim=0)
 
     def fit(self, img, coordinates, augment=True):
+        if img.dtype != "int32":
+            raise Exception("Image must be of type int32")
+
         img, _ = self.normalizer.normalize(img, stains=True)
         img = img / 255
         mask = cv2.fillPoly(np.zeros(img.shape[:-1]), [coordinates], 1)
@@ -408,10 +412,6 @@ class DCF:
                     )
                     contour = contour.cpu().detach().numpy()
    
-                # try:
-                #     contour = delete_loops(contour)
-                # except:
-                #     pass
                 interpolated_contour = self.interpolate(
                         contour, n=self.nb_points
                     ).astype(np.float32)
