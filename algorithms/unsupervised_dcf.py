@@ -1,92 +1,52 @@
 import sys
 from pathlib import Path
+from utils import *
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-
-from utils import *
-from scipy.spatial.distance import cdist
 import torchvision.models as models
 from torch.nn import MSELoss, Module
 from torchvision import transforms
 import torch.nn.functional as F
-from typing import  Tuple
-import torch
-from scipy.interpolate import CubicSpline
-from torch import autograd
+from typing import Tuple
+from torch_contour.torch_contour import area, Smoothing, CleanContours
+import matplotlib.pyplot as plt
 
+import torch
+import torch.nn.functional as F
+from torch.nn import Module
+
+# from
 preprocess = transforms.Compose(
     [
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
-
 vgg16 = models.vgg16(pretrained=True)
-model = vgg16.features
-model.cuda()
 
 
-class Mask_to_features(Module):
-    def __init__(
-        self,
-        shapes,
-    ):
-        super(Mask_to_features, self).__init__()
-        self.shapes = shapes
-
-    def forward(self, activations: dict, mask: torch.tensor):
-        mask0 = F.interpolate(
-            mask, size=(self.shapes["0"][2], self.shapes["0"][3]), mode="bilinear"
-        )
-        mask1 = F.interpolate(
-            mask, size=(self.shapes["1"][2], self.shapes["1"][3]), mode="bilinear"
-        )
-        mask2 = mask
-        mask3 = F.interpolate(
-            mask, size=(self.shapes["3"][2], self.shapes["3"][3]), mode="bilinear"
-        )
-        mask4 = F.interpolate(
-            mask, size=(self.shapes["4"][2], self.shapes["4"][3]), mode="bilinear"
-        )
-
-        masks = [mask0, mask1, mask2, mask3, mask4]
-
-        features_inside, features_outside = [], []
-        for i in range(5):
-            features_inside.append(
-                torch.sum(activations[str(i)] * masks[i], dim=(0, 2, 3))
-                / (torch.sum(masks[i], (0, 2, 3)) + 1e-5)
-            )
-
-            features_outside.append(
-                torch.sum(activations[str(i)] * (1 - masks[i]), dim=(0, 2, 3))
-                / (torch.sum((1 - masks[i]), (0, 2, 3)) + 1e-5)
-            )
-
-        return features_inside, features_outside
+cleaner = CleanContours()
+ctf = Contour_to_features()
 
 
-multiscale = vgg16.features
-multiscale.cuda()
+VGG16 = vgg16.features
 
 
 class DCF:
     def __init__(
         self,
-        nb_points=100,
         n_epochs=100,
-        model=multiscale,
+        model=VGG16,
         learning_rate=5e-2,
         clip=1e-1,
         exponential_decay=0.998,
         thresh=1e-2,
         weights=[1, 1, 1, 1, 1],
         area_force=0.0,
-        gaussian_sigma=1,
+        sigma=1,
     ):
         super(DCF, self).__init__()
 
-        self.nb_points = nb_points
         self.n_epochs = n_epochs
         self.model = model
         self.activations = {}
@@ -100,91 +60,41 @@ class DCF:
         self.shapes = {}
         self.ed = exponential_decay
         self.thresh = thresh
-        self.gaussian_sigma = gaussian_sigma
-        self.kernel = self.define_kernel()
         self.lambda_area = area_force
-        self.weights = weights
-
-    def define_kernel(self):
-        mil = self.gaussian_sigma * 10 * 1 // 2
-        filter = np.arange(self.gaussian_sigma * 10) - mil
-        x = np.exp((-1 / 2) * (filter**2) / (2 * (self.gaussian_sigma) ** 2))
-
-        return torch.tensor(x / np.sum(x), device="cuda", dtype=torch.float32)
-
-    def convolve(self, x):
-        margin = x.shape[0] // 2
-        top = x[:margin]
-        bot = x[-margin:]
-        out = torch.concatenate([bot, x, top]).T[:, None]
-        return torch.squeeze(F.conv1d(out, self.kernel[None, None, :], padding="same"))[
-            :, margin:-margin
-        ]
-
-    def interpolate(self, contour, n):
-        margin = n // 10
-        top = contour[:margin]
-        bot = contour[-margin:]
-        contour_init_new = np.concatenate([bot, contour, top])
-        distance = np.cumsum(
-            np.sqrt(np.sum(np.diff(contour_init_new, axis=0) ** 2, axis=1))
-        )
-        distance = np.insert(distance, 0, 0) / distance[-1]
-        boolean_equal = (np.roll(np.diff(distance, append=2), 1) == 0).astype(bool)
-        distance[boolean_equal] = distance[boolean_equal] + 1e-6
-
-        indices = np.linspace(0, contour_init_new.shape[0] - 1, 100).astype(int)
-        indices = np.unique(indices)
-
-        Cub = CubicSpline(distance[indices], contour_init_new[indices])
-        interp_contour = Cub(np.linspace(distance[margin], distance[-margin], n))
-
-        return interp_contour
+        self.weights = weights / np.sum(weights)
+        self.smooth = Smoothing(sigma)
+        self.device = None
 
     def get_activations(self, name):
-        def hook(model, input: Tuple[torch.Tensor], output):
-            self.activations[name] = output.to(torch.float32)
-            self.shapes[name] = output.shape
+        def hook(model, input, output):
+            self.activations[name] = output.to(torch.float32).detach()
 
         return hook
 
-    def area_force(self, contour):
-        x, y = contour[:, 0], contour[:, 1]
-        area = -0.5 * torch.abs(
-            torch.dot(x, torch.roll(y, 1)) - torch.dot(y, torch.roll(x, 1))
-        )
-        return area
+    def multiscale_loss(self, features, weights):
+        """
+        Computes a multiscale loss based on the features inside and outside the mask and given weights.
 
-    def contour_to_mask(self, contour):
-        k = 1e5
-        eps = 1e-6
-        contours = torch.unsqueeze(contour, dim=0)
-        diff = -self.mesh + contours
-        roll_diff = torch.roll(diff, -1, dims=1)
-        sign = diff * torch.roll(roll_diff, 1, dims=2)
-        sign = sign[:, :, 1] - sign[:, :, 0]
-        sign = torch.tanh(k * sign)
-        norm_diff = torch.linalg.vector_norm(diff, dim=2)
-        norm_roll = torch.linalg.vector_norm(roll_diff, dim=2)
-        scalar_product = torch.sum(diff * roll_diff, dim=2)
-        clip = torch.clamp(scalar_product / (norm_diff * norm_roll), -1 + eps, 1 - eps)
-        angles = torch.acos(clip)
-        torch.pi = torch.acos(torch.zeros(1)).item() * 2
-        sum_angles = torch.clamp(
-            -torch.sum(sign * angles, dim=1) / (2 * torch.pi), 0, 1
-        )
-        out0 = sum_angles.reshape(1, self.shapes["2"][2], self.shapes["2"][3])
-        mask = torch.unsqueeze(out0, dim=0)
-        area_force = self.area_force(contour)
-        return mask, area_force
+        This method calculates the energy difference between features inside and outside the mask for each scale,
+        normalizes it by the mean activation, and then sums these energies weighted by the given weights.
 
-    def forward_on_epoch(self, contour, epoch):
-        mask, area_force = self.contour_to_mask(contour)
-        features_inside, features_outside = self.mtf(self.activations, mask)
+        Parameters:
+        -----------
+        features : tuple of (list of torch.Tensor, list of torch.Tensor)
+            A tuple containing two lists: features_inside and features_outside for each scale.
+        weights : list or numpy array
+            A list or numpy array of weights for each scale.
 
-        arr0 = torch.tensor(self.weights, device="cuda")
-        energies = torch.zeros(len(self.shapes)).cuda()
-        arr = arr0 / torch.sum(arr0)
+        Returns:
+        --------
+        torch.Tensor
+            The computed multiscale loss.
+        """
+
+        features_inside, features_outside = features
+        nb_scales = len(features_inside)
+        weights = torch.tensor(weights, device=self.device)
+        energies = torch.zeros(nb_scales)
         for j in range(len(features_inside)):
             energies[j] = -torch.linalg.vector_norm(
                 torch.clamp(
@@ -194,108 +104,100 @@ class DCF:
                 ),
                 2,
             )
-        fin = torch.sum(energies * arr0)
-        return fin + self.lambda_area * area_force
+        fin = torch.sum(energies * weights)
+        return fin
 
     def predict(self, img, contour_init):
+        """
+        Predicts the contour for a given image and initial contour using a specified model.
 
-        if img.dtype != "int32":
-            raise Exception("Image must be of type int32")
-        img = img / 255
+        This method performs a series of operations including preprocessing the image, initializing the contour,
+        and iteratively updating the contour using gradient-based optimization until a stopping criterion is met.
 
-        self.dims = np.array(np.flip(img.shape[:-1]))
-        scale = torch.tensor(
-            [512.0, 512.0], device="cuda", dtype=torch.float32
-        ) / torch.tensor(self.dims.copy(), device="cuda", dtype=torch.float32)
-        img_anchor = img.astype(np.float32).copy()
-        tensor_anchor = torch.unsqueeze(
-            torch.tensor(np.transpose(img_anchor, (-1, 0, 1)), device="cuda"), 0
-        )
-        input_tensor = tensor_anchor
+        Parameters:
+        -----------
+        img : torch.Tensor
+            The input image tensor of shape (B, C, H, W) where B is the batch size, C is the number of channels, H is the height, and W is the width.
+            The image tensor must be of type float32.
+        contour_init : torch.Tensor
+            The initial contour tensor.
+            the initial contour must be of shape (B, 1, K, 2) where B is the batch size, K is the number of node.
 
-        x = self.model(preprocess(input_tensor))
+        Returns:
+        --------
+        contour_history : np.ndarray
+            A numpy array containing the history of contours during the prediction process.
+            contour_history has shape(self.n_epochs, B, 1, K, 2)
+        loss_history : np.ndarray
+            A numpy array containing the loss values during each epoch of the prediction process.
 
-        self.mesh = torch.unsqueeze(
-            torch.stack(
-                torch.meshgrid(
-                    torch.arange(self.shapes["2"][2]), torch.arange(self.shapes["2"][3])
-                ),
-                dim=-1,
-            ).reshape(-1, 2),
-            dim=1,
-        )
+        Raises:
+        -------
+        Exception
+            If the image tensor is not of type float32.
+        """
 
-        self.mesh = self.mesh.to(torch.float32).cuda() / torch.tensor(
-            self.shapes["2"][2:], dtype=torch.float32, device="cuda"
-        )
-        self.mtf = Mask_to_features(self.shapes)
-
+        self.device = contour_init.device
+        self.img_dim = torch.tensor(img.shape[-2:], device=self.device)
         stop = False
-        tots = np.zeros((self.n_epochs))
-        scores = np.zeros((self.n_epochs, len(self.shapes)))
-        contours = []
-        contour_init = contour_init / self.dims
-        tensor = torch.tensor(
-            np.transpose(img.astype(np.float32), (-1, 0, 1)).copy(), device="cuda"
+        loss_history = np.zeros((self.n_epochs))
+        contour_history = []
+
+        if img.dtype != torch.float32:
+            raise Exception("Image must be of type float32")
+
+        scale = (
+            torch.tensor([512.0, 512.0], device=self.device, dtype=torch.float32)
+            / self.img_dim
         )
-        input_tensor = torch.unsqueeze(tensor, 0)
-        x = self.model(preprocess(input_tensor))
+        if self.device == -0:
+            self.model = self.model.cuda()
 
-        contour_init = self.interpolate(contour_init, self.nb_points)
-        contour_init = np.roll(contour_init, axis=1, shift=1)
+        _ = self.model(preprocess(img))
+        contour = torch.roll(contour_init, dims=-1, shifts=1)
 
-        contour = torch.from_numpy(contour_init).cuda()
         contour.requires_grad = True
 
         for i in range(self.n_epochs):
-            with autograd.detect_anomaly():
-
-                tot = self.forward_on_epoch(contour, i + 1)
-                tots[i] = tot
-                tot.backward(inputs=contour)
-
-            norm_grad = torch.unsqueeze(
-                torch.linalg.vector_norm(contour.grad, dim=1), -1
+            features = ctf(contour, self.activations)
+            loss = self.multiscale_loss(features, self.weights) + torch.mean(
+                self.lambda_area * area(contour)
             )
+            loss_history[i] = loss
+            loss.backward(inputs=contour)
+            norm_grad = torch.linalg.vector_norm(contour.grad, dim=-1, keepdim=True)
             stop = torch.max(norm_grad) < self.thresh
-            contours.append(contour.cpu().detach().numpy())
+            contour_history.append(contour.cpu().detach().numpy())
             if stop == False:
                 with torch.no_grad():
                     clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
                     gradient_direction = (
                         contour.grad * clipped_norm / (norm_grad + 1e-5)
                     )
-                    gradient_direction = self.convolve(
+                    gradient_direction = self.smooth(
                         gradient_direction.to(torch.float32)
-                    ).T
+                    )
+
                     contour = (
                         contour
                         - scale * self.learning_rate * (self.ed**i) * gradient_direction
                     )
                     contour = contour.cpu().detach().numpy()
-                    try:
-                        contour_without_loops = delete_loops(contour)
-                    except:
-                        contour_without_loops = contour
-                    if contour_without_loops.shape[0] == 0:
-                        interpolated_contour = self.interpolate(
-                            contour, n=self.nb_points
-                        ).astype(np.float32)
+                    contour_without_loops = cleaner.clean_contours_and_interpolate(
+                        contour
+                    )
 
-                    else:
-                        interpolated_contour = self.interpolate(
-                            contour_without_loops, n=self.nb_points
-                        ).astype(np.float32)
-
-                contour = torch.clip(
-                    torch.from_numpy(interpolated_contour).cuda(), 0, 1
-                )
+                contour = torch.clip(torch.from_numpy(contour_without_loops), 0, 1)
+                if self.device == -0:
+                    contour = contour.cuda()
                 contour.grad = None
                 contour.requires_grad = True
             else:
-                print("the algorithm stopped earlier")
+                print("the stopping criterion was reached: early stopping")
                 break
 
-        contours = np.roll(np.array(contours), 1, -1)
-        contours = (contours * self.dims).astype(np.int32)
-        return contours, tots
+        contour_history = np.roll(np.stack(contour_history), axis=-1, shift=1)
+        contour_history = (
+            contour_history * np.array(img.shape[-2:])[None, None, None, None]
+        ).astype(np.int32)
+        return contour_history, loss_history

@@ -17,29 +17,6 @@ def row_to_filename(row):
     return filename
 
 
-def define_contour_init(img, center, axes, angle = 0):
-  # major, minor axes
-    start_angle = 0
-    end_angle = 360
-    color = 1
-    thickness = -1
-
-    # Draw a filled ellipse on the input image
-    mask = cv2.ellipse(
-        np.zeros(img.shape[:-1]),
-        center,
-        axes,
-        angle,
-        start_angle,
-        end_angle,
-        color,
-        thickness,
-    ).astype(np.uint8)
-    contour = np.squeeze(
-        cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0]
-    )
-    return contour, mask
-
 def find_thresh(filename, percentile):
     img = Slide(os.path.join(path_slides, filename), processed_path="")
     arr = img.resampled_array(scale_factor=4)

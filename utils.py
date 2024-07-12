@@ -1,18 +1,146 @@
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
-from scipy.interpolate import interp1d
 import numpy as np
-from isect_segments_bentley_ottmann import poly_point_isect
+import cv2
+from torch.nn import Module
+import torch
+import torch.functional as F
+from torch_contour.torch_contour import Contour_to_mask
 
-def interpolate(shape, n):
-    distance = np.cumsum(np.sqrt(np.sum(np.diff(shape, axis=0) ** 2, axis=1)))
-    distance = np.insert(distance, 0, 0) / distance[-1]
-    alpha = np.linspace(0, 1, n)
-    shape = interp1d(distance, shape, kind="linear", axis=0)(alpha)
 
-    return shape
+
+
+class Contour_to_features(torch.nn.Module):
+    """
+    A PyTorch neural network module designed to convert contour data into feature representations.
+    This class leverages two sub-modules: Contour_to_mask and Mask_to_features.
+    """
+
+    def __init__(self):
+        """
+        Initializes the Contour_to_features class.
+        
+        This method creates instances of two sub-modules:
+        - Contour_to_mask with a parameter of 200.
+        - Mask_to_features with no parameters.
+
+        Attributes:
+        -----------
+        ctm : Contour_to_mask
+            An instance of the Contour_to_mask class, initialized with a parameter of 200.
+        mtf : Mask_to_features
+            An instance of the Mask_to_features class.
+        """
+        super(Contour_to_features, self).__init__()
+        self.ctm = Contour_to_mask(200)
+        self.mtf = Mask_to_features()
+
+    def forward(self, contour, activations):
+        """
+        Defines the forward pass of the Contour_to_features model.
+        
+        This method takes in a contour and activations, uses the Contour_to_mask sub-module to
+        generate a mask from the contour, and then applies the Mask_to_features sub-module to
+        combine the activations with the mask.
+
+        Parameters:
+        -----------
+        contour : Tensor
+            The contour data input tensor.
+        activations : Tensor
+            The activations input tensor.
+
+        Returns:
+        --------
+        Tensor
+            The output features after combining the activations with the mask.
+        """
+        mask = self.ctm(contour)
+        return self.mtf(activations, mask)
+
+
+
+
+class Mask_to_features(Module):
+    """
+    A PyTorch neural network module designed to convert mask and activation data into feature representations.
+    """
+
+    def __init__(self):
+        """
+        Initializes the Mask_to_features class.
+
+        This method sets up the module without any specific parameters.
+        """
+        super(Mask_to_features, self).__init__()
+
+    def forward(self, activations: dict, mask: torch.Tensor):
+        """
+        Defines the forward pass of the Mask_to_features model.
+        
+        This method takes in a dictionary of activations and a mask tensor, resizes the mask to match the
+        dimensions of each activation layer, and then calculates features inside and outside the mask for each
+        activation layer.
+
+        Parameters:
+        -----------
+        activations : dict
+            A dictionary containing activation tensors with keys as layer indices.
+        mask : torch.Tensor
+            The mask tensor.
+
+        Returns:
+        --------
+        features_inside : list of torch.Tensor
+            A list containing the feature representations inside the mask for each activation layer.
+        features_outside : list of torch.Tensor
+            A list containing the feature representations outside the mask for each activation layer.
+        """
+        mask0 = F.interpolate(
+            mask,
+            size=(activations["0"].shape[-2], activations["0"].shape[-1]),
+            mode="bilinear",
+        )
+        mask1 = F.interpolate(
+            mask,
+            size=(activations["1"].shape[-2], activations["1"].shape[-1]),
+            mode="bilinear",
+        )
+        mask2 = F.interpolate(
+            mask,
+            size=(activations["2"].shape[-2], activations["2"].shape[-1]),
+            mode="bilinear",
+        )
+        mask3 = F.interpolate(
+            mask,
+            size=(activations["3"].shape[-2], activations["3"].shape[-1]),
+            mode="bilinear",
+        )
+        mask4 = F.interpolate(
+            mask,
+            size=(activations["4"].shape[-2], activations["4"].shape[-1]),
+            mode="bilinear",
+        )
+
+        masks = [mask0, mask1, mask2, mask3, mask4]
+
+        features_inside, features_outside = [], []
+        for i in range(len(activations)):
+            features_inside.append(
+                torch.sum(activations[str(i)] * masks[i], dim=(0, 2, 3))
+                / (torch.sum(masks[i], (0, 2, 3)) + 1e-5)
+            )
+
+            features_outside.append(
+                torch.sum(activations[str(i)] * (1 - masks[i]), dim=(0, 2, 3))
+                / (torch.sum((1 - masks[i]), (0, 2, 3)) + 1e-5)
+            )
+
+        return features_inside, features_outside
+
 
 
 def augmentation(img, mask):
@@ -42,23 +170,25 @@ def augmentation(img, mask):
     return img, mask
 
 
-def delete_loops(contour):
-    tuples = poly_point_isect.isect_polygon_include_segments(contour)
+def define_contour_init(img, center, axes, angle=0):
+    # major, minor axes
+    start_angle = 0
+    end_angle = 360
+    color = 1
+    thickness = -1
 
-    if len(tuples)>0:
-        indices = np.arange(contour.shape[0])
-        for isect, segment in tuples:
-            index1 = np.where(np.all(contour == segment[0][0], axis=-1))[0][0]
-            index2 = np.where(np.all(contour == segment[1][0], axis=-1))[0][0]
-            min_index = np.minimum(index1,index2)
-            max_index = np.maximum(index1,index2)
-
-            if np.abs(index1 - index2) / contour.shape[0] < 0.5:
-                new_indices = np.concatenate(
-                    [np.arange(min_index), np.arange(max_index, contour.shape[0])]
-                )
-            else:
-                new_indices = np.concatenate([np.arange(min_index+1, max_index-1)])
-            indices = np.intersect1d(indices, new_indices)
-        contour = contour[indices]
-    return contour
+    # Draw a filled ellipse on the input image
+    mask = cv2.ellipse(
+        np.zeros(img.shape[:-1]),
+        center,
+        axes,
+        angle,
+        start_angle,
+        end_angle,
+        color,
+        thickness,
+    ).astype(np.uint8)
+    contour = np.squeeze(
+        cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0]
+    )
+    return contour, mask
