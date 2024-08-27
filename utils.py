@@ -7,10 +7,9 @@ import numpy as np
 import cv2
 from torch.nn import Module
 import torch
-import torch.functional as F
+import torch.nn.functional as F
 from torch_contour.torch_contour import Contour_to_mask
-
-
+import matplotlib.pyplot as plt
 
 
 class Contour_to_features(torch.nn.Module):
@@ -19,10 +18,10 @@ class Contour_to_features(torch.nn.Module):
     This class leverages two sub-modules: Contour_to_mask and Mask_to_features.
     """
 
-    def __init__(self):
+    def __init__(self, size):
         """
         Initializes the Contour_to_features class.
-        
+
         This method creates instances of two sub-modules:
         - Contour_to_mask with a parameter of 200.
         - Mask_to_features with no parameters.
@@ -35,13 +34,14 @@ class Contour_to_features(torch.nn.Module):
             An instance of the Mask_to_features class.
         """
         super(Contour_to_features, self).__init__()
-        self.ctm = Contour_to_mask(200)
-        self.mtf = Mask_to_features()
+        self.ctm = Contour_to_mask(size).requires_grad_(False)
+        self.mtf = Mask_to_features().requires_grad_(False)
+
 
     def forward(self, contour, activations):
         """
         Defines the forward pass of the Contour_to_features model.
-        
+
         This method takes in a contour and activations, uses the Contour_to_mask sub-module to
         generate a mask from the contour, and then applies the Mask_to_features sub-module to
         combine the activations with the mask.
@@ -62,8 +62,6 @@ class Contour_to_features(torch.nn.Module):
         return self.mtf(activations, mask)
 
 
-
-
 class Mask_to_features(Module):
     """
     A PyTorch neural network module designed to convert mask and activation data into feature representations.
@@ -80,7 +78,7 @@ class Mask_to_features(Module):
     def forward(self, activations: dict, mask: torch.Tensor):
         """
         Defines the forward pass of the Mask_to_features model.
-        
+
         This method takes in a dictionary of activations and a mask tensor, resizes the mask to match the
         dimensions of each activation layer, and then calculates features inside and outside the mask for each
         activation layer.
@@ -99,48 +97,31 @@ class Mask_to_features(Module):
         features_outside : list of torch.Tensor
             A list containing the feature representations outside the mask for each activation layer.
         """
-        mask0 = F.interpolate(
-            mask,
-            size=(activations["0"].shape[-2], activations["0"].shape[-1]),
-            mode="bilinear",
-        )
-        mask1 = F.interpolate(
-            mask,
-            size=(activations["1"].shape[-2], activations["1"].shape[-1]),
-            mode="bilinear",
-        )
-        mask2 = F.interpolate(
-            mask,
-            size=(activations["2"].shape[-2], activations["2"].shape[-1]),
-            mode="bilinear",
-        )
-        mask3 = F.interpolate(
-            mask,
-            size=(activations["3"].shape[-2], activations["3"].shape[-1]),
-            mode="bilinear",
-        )
-        mask4 = F.interpolate(
-            mask,
-            size=(activations["4"].shape[-2], activations["4"].shape[-1]),
-            mode="bilinear",
-        )
 
-        masks = [mask0, mask1, mask2, mask3, mask4]
+        masks = [
+            F.interpolate(
+                mask,
+                size=(activations[str(i)].shape[-2], activations[str(i)].shape[-1]),
+                mode="bilinear",
+            )
+            for i in range(5)
+        ]
 
         features_inside, features_outside = [], []
+
         for i in range(len(activations)):
+
             features_inside.append(
-                torch.sum(activations[str(i)] * masks[i], dim=(0, 2, 3))
-                / (torch.sum(masks[i], (0, 2, 3)) + 1e-5)
+                torch.sum(activations[str(i)] * masks[i], dim=(2, 3))
+                / (torch.sum(masks[i], (2, 3)) + 1e-5)
             )
 
             features_outside.append(
-                torch.sum(activations[str(i)] * (1 - masks[i]), dim=(0, 2, 3))
-                / (torch.sum((1 - masks[i]), (0, 2, 3)) + 1e-5)
+                torch.sum(activations[str(i)] * (1 - masks[i]), dim=(2, 3))
+                / (torch.sum((1 - masks[i]), (2, 3)) + 1e-5)
             )
 
         return features_inside, features_outside
-
 
 
 def augmentation(img, mask):

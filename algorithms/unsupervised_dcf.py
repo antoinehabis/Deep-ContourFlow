@@ -4,18 +4,13 @@ from utils import *
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import torchvision.models as models
-from torch.nn import MSELoss, Module
+from torch.nn import MSELoss
 from torchvision import transforms
-import torch.nn.functional as F
-from typing import Tuple
 from torch_contour.torch_contour import area, Smoothing, CleanContours
-import matplotlib.pyplot as plt
-
 import torch
-import torch.nn.functional as F
-from torch.nn import Module
 
-# from
+
+
 preprocess = transforms.Compose(
     [
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -23,13 +18,10 @@ preprocess = transforms.Compose(
 )
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 vgg16 = models.vgg16(pretrained=True)
+VGG16 = vgg16.features
 
 
 cleaner = CleanContours()
-ctf = Contour_to_features()
-
-
-VGG16 = vgg16.features
 
 
 class DCF:
@@ -50,11 +42,13 @@ class DCF:
         self.n_epochs = n_epochs
         self.model = model
         self.activations = {}
+
         self.model[3].register_forward_hook(self.get_activations("0"))
         self.model[8].register_forward_hook(self.get_activations("1"))
         self.model[15].register_forward_hook(self.get_activations("2"))
         self.model[22].register_forward_hook(self.get_activations("3"))
         self.model[29].register_forward_hook(self.get_activations("4"))
+
         self.learning_rate = learning_rate
         self.clip = clip
         self.shapes = {}
@@ -67,11 +61,13 @@ class DCF:
 
     def get_activations(self, name):
         def hook(model, input, output):
-            self.activations[name] = output.to(torch.float32).detach()
+
+            device = input[0].device
+            self.activations[name] = output.to(device)
 
         return hook
 
-    def multiscale_loss(self, features, weights):
+    def multiscale_loss(self, features, weights, eps = 1e-2):
         """
         Computes a multiscale loss based on the features inside and outside the mask and given weights.
 
@@ -90,20 +86,22 @@ class DCF:
         torch.Tensor
             The computed multiscale loss.
         """
-
+        
         features_inside, features_outside = features
         nb_scales = len(features_inside)
-        weights = torch.tensor(weights, device=self.device)
-        energies = torch.zeros(nb_scales)
+        weights = torch.tensor(weights, device=self.device).requires_grad_(False)
+        energies = torch.zeros(nb_scales, device=self.device)
+
         for j in range(len(features_inside)):
-            energies[j] = -torch.linalg.vector_norm(
-                torch.clamp(
-                    (features_inside[j] - features_outside[j])
-                    / (torch.mean(self.activations[str(j)], dim=(0, 2, 3)) + 1e-6),
-                    1e-6,
-                ),
-                2,
+            print(torch.linalg.vector_norm(self.activations[str(j)], 2, dim=(1, 2, 3)))
+            tmp = -torch.linalg.vector_norm(
+                features_inside[j] - features_outside[j], 2, dim=-1
+            ) / (
+                torch.linalg.vector_norm(self.activations[str(j)], 2, dim=(1, 2, 3))
+                + eps
             )
+            energies[j] = torch.mean(tmp)
+
         fin = torch.sum(energies * weights)
         return fin
 
@@ -139,6 +137,9 @@ class DCF:
 
         self.device = contour_init.device
         self.img_dim = torch.tensor(img.shape[-2:], device=self.device)
+        size = img.shape[-1] // (2**2)
+        ctf = Contour_to_features(size)
+
         stop = False
         loss_history = np.zeros((self.n_epochs))
         contour_history = []
@@ -150,13 +151,12 @@ class DCF:
             torch.tensor([512.0, 512.0], device=self.device, dtype=torch.float32)
             / self.img_dim
         )
-        if self.device == -0:
+        if str(self.device) == "cuda:0":
             self.model = self.model.cuda()
-
         _ = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
 
-        contour.requires_grad = True
+        contour.requires_grad_()
 
         for i in range(self.n_epochs):
             features = ctf(contour, self.activations)
@@ -172,31 +172,30 @@ class DCF:
                 with torch.no_grad():
                     clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
                     gradient_direction = (
-                        contour.grad * clipped_norm / (norm_grad + 1e-5)
+                        contour.grad * clipped_norm / (norm_grad + 1e-8)
                     )
-                    gradient_direction = self.smooth(
-                        gradient_direction.to(torch.float32)
-                    )
+                    # gradient_direction = self.smooth(
+                    #     gradient_direction.to(torch.float32)
+                    # )
 
                     contour = (
                         contour
                         - scale * self.learning_rate * (self.ed**i) * gradient_direction
                     )
-                    contour = contour.cpu().detach().numpy()
                     contour_without_loops = cleaner.clean_contours_and_interpolate(
-                        contour
+                        contour.cpu().detach().numpy()
                     )
 
                 contour = torch.clip(torch.from_numpy(contour_without_loops), 0, 1)
-                if self.device == -0:
+                if str(self.device) == "cuda:0":
                     contour = contour.cuda()
                 contour.grad = None
-                contour.requires_grad = True
+                contour.requires_grad_()
             else:
                 print("the stopping criterion was reached: early stopping")
                 break
 
-        contour_history = np.roll(np.stack(contour_history), axis=-1, shift=1)
+        contour_history = np.roll(np.stack(contour_history), axis=-1, shift=-1)
         contour_history = (
             contour_history * np.array(img.shape[-2:])[None, None, None, None]
         ).astype(np.int32)
