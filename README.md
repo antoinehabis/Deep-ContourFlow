@@ -6,6 +6,10 @@ In This repository you can find the code for both: unsupervised Deep-ContourFlow
 ![Alt text](./folder_images_paper/skin_lesions.png "Unsupervised DCF: evolution of the contour on three skin lesions from Skin Cancer MNIST: HAM10000")
 ![Alt text](./folder_images_paper/tumor_region.png "Unsupervised DCF: evolution of the contour on two histology images.")
 
+To use this repository please first install torch-contour:
+```
+$pip install torch_contour
+```
 
 ## Unsupervised Deep Active Contour:
 
