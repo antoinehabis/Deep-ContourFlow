@@ -174,9 +174,9 @@ class DCF:
                     gradient_direction = (
                         contour.grad * clipped_norm / (norm_grad + 1e-8)
                     )
-                    # gradient_direction = self.smooth(
-                    #     gradient_direction.to(torch.float32)
-                    # )
+                    gradient_direction = self.smooth(
+                        gradient_direction.to(torch.float32)
+                    )
 
                     contour = (
                         contour
