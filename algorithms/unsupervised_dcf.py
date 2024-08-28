@@ -8,7 +8,7 @@ from torch.nn import MSELoss
 from torchvision import transforms
 from torch_contour.torch_contour import area, Smoothing, CleanContours
 import torch
-
+from tqdm import tqdm
 
 
 preprocess = transforms.Compose(
@@ -19,9 +19,6 @@ preprocess = transforms.Compose(
 mse = MSELoss(size_average=None, reduce=None, reduction="mean")
 vgg16 = models.vgg16(pretrained=True)
 VGG16 = vgg16.features
-
-
-cleaner = CleanContours()
 
 
 class DCF:
@@ -43,11 +40,11 @@ class DCF:
         self.model = model
         self.activations = {}
 
-        self.model[3].register_forward_hook(self.get_activations("0"))
-        self.model[8].register_forward_hook(self.get_activations("1"))
-        self.model[15].register_forward_hook(self.get_activations("2"))
-        self.model[22].register_forward_hook(self.get_activations("3"))
-        self.model[29].register_forward_hook(self.get_activations("4"))
+        self.model[3].register_forward_hook(self.get_activations(0))
+        self.model[8].register_forward_hook(self.get_activations(1))
+        self.model[15].register_forward_hook(self.get_activations(2))
+        self.model[22].register_forward_hook(self.get_activations(3))
+        self.model[29].register_forward_hook(self.get_activations(4))
 
         self.learning_rate = learning_rate
         self.clip = clip
@@ -57,8 +54,9 @@ class DCF:
         self.lambda_area = area_force
         self.weights = weights / np.sum(weights)
         self.smooth = Smoothing(sigma)
+        self.cleaner = CleanContours()
         self.device = None
-
+        self.Ctf = Contour_to_features(256)
     def get_activations(self, name):
         def hook(model, input, output):
 
@@ -93,11 +91,10 @@ class DCF:
         energies = torch.zeros(nb_scales, device=self.device)
 
         for j in range(len(features_inside)):
-            print(torch.linalg.vector_norm(self.activations[str(j)], 2, dim=(1, 2, 3)))
             tmp = -torch.linalg.vector_norm(
                 features_inside[j] - features_outside[j], 2, dim=-1
             ) / (
-                torch.linalg.vector_norm(self.activations[str(j)], 2, dim=(1, 2, 3))
+                torch.linalg.vector_norm(self.activations[j], 2, dim=(1, 2, 3))
                 + eps
             )
             energies[j] = torch.mean(tmp)
@@ -138,8 +135,6 @@ class DCF:
         self.device = contour_init.device
         self.img_dim = torch.tensor(img.shape[-2:], device=self.device)
         size = img.shape[-1] // (2**2)
-        ctf = Contour_to_features(size)
-
         stop = False
         loss_history = np.zeros((self.n_epochs))
         contour_history = []
@@ -158,8 +153,10 @@ class DCF:
 
         contour.requires_grad_()
 
-        for i in range(self.n_epochs):
-            features = ctf(contour, self.activations)
+        print('Contour is evolving please wait a few moment...')
+
+        for i in tqdm(range(self.n_epochs)):
+            features = self.Ctf(contour, self.activations)
             loss = self.multiscale_loss(features, self.weights) + torch.mean(
                 self.lambda_area * area(contour)
             )
@@ -182,7 +179,7 @@ class DCF:
                         contour
                         - scale * self.learning_rate * (self.ed**i) * gradient_direction
                     )
-                    contour_without_loops = cleaner.clean_contours_and_interpolate(
+                    contour_without_loops = self.cleaner.clean_contours_and_interpolate(
                         contour.cpu().detach().numpy()
                     )
 
@@ -192,11 +189,12 @@ class DCF:
                 contour.grad = None
                 contour.requires_grad_()
             else:
-                print("the stopping criterion was reached: early stopping")
+                print("The stopping criterion was reached")
                 break
 
         contour_history = np.roll(np.stack(contour_history), axis=-1, shift=-1)
         contour_history = (
             contour_history * np.array(img.shape[-2:])[None, None, None, None]
         ).astype(np.int32)
+        print("Contour stopped")
         return contour_history, loss_history
