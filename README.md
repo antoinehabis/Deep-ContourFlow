@@ -1,5 +1,12 @@
 # Deep-Active-Contour
 
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+[![Mail](https://img.shields.io/badge/Gmail-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:antoine.habis.tlcm@gmail.com)
+[![Downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
+[![Downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
+[![ArXiv Paper](https://img.shields.io/badge/DOI-10.1038%2Fs41586--020--2649--2-blue)](
+https://doi.org/10.48550/arXiv.2407.10696)
+
 In This repository you can find the code for both: unsupervised Deep-ContourFlow and One shot learning Deep-ContourFlow.
 
 ![Alt text](./folder_images_paper/real_life_images.png "Unsupervised DCF: evolution of the contour on four real-life images when varying the initial contour")
@@ -11,7 +18,7 @@ To use this repository please first install torch-contour:
 $pip install torch_contour
 ```
 
-## Unsupervised Deep Active Contour:
+## Unsupervised Deep ContourFLow:
 
 To use Unsupervised DCF just add your image in ```images_test_unsupervised_dcf``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
 
