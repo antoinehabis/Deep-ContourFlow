@@ -11,9 +11,6 @@ from config import *
 import logging
 
 import sys
-from argparse import ArgumentParser
-from shapely import wkt
-from shapely.affinity import affine_transform
 import pandas as pd
 from cytomine import Cytomine
 from cytomine.models import AnnotationCollection, ImageInstanceCollection

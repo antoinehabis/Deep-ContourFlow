@@ -4,7 +4,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
 from algorithms.dcf_distance_map import DCF
-from utils import row_to_coordinates, row_to_filename, preprocess_contour
+from utils import  row_to_filename, preprocess_contour
 from tqdm import tqdm
 import pandas as pd
 from skimage.morphology import disk
@@ -56,7 +56,7 @@ def compute_scores_filename(filename, df):
     annotations_support = annotations[annotations["term"] == 1]
     annotations_support = annotations_support.sample(frac=1).head(10)
 
-    for index0, row0 in annotations_support.iterrows():
+    for _, row0 in annotations_support.iterrows():
         dcf = DCF(
             nb_points=100,
             n_epochs=300,
@@ -84,7 +84,7 @@ def compute_scores_filename(filename, df):
 
         dcf.fit(img_support, contour_support, augment=True)
 
-        for index1, row1 in annotations.iterrows():
+        for _, row1 in annotations.iterrows():
             filename_img = row_to_filename(row1)
             img = tifffile.imread(os.path.join(path_images, filename_img))
             term = row1.term
@@ -95,7 +95,6 @@ def compute_scores_filename(filename, df):
 
             x = np.argmin(tots)
 
-            energie_fin = energies[x]
             contour_pred = shape_fin[x]
 
             img_true = tifffile.imread(os.path.join(path_masks, filename_img))

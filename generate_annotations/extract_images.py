@@ -25,7 +25,6 @@ n = annotations.shape[0]
 annotations = annotations.replace(["dilated_tubule", "fake_tubule"], [1, 0])
 
 filenames = np.unique(list(annotations["slide"]))
-
 coordinates_start = {}
 
 for filename in filenames:

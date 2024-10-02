@@ -5,7 +5,7 @@ from .utils_dilated_tubules import *
 from torchvision.models import vgg16
 from torch.nn import CosineSimilarity
 from torchvision import transforms
-from torchstain import MacenkoNormalizer
+import torchstain 
 import torch
 import cv2
 import numpy as np
@@ -59,7 +59,7 @@ class DCF:
         self.smooth = Smoothing(sigma)
         self.ctf = Contour_to_isoline_features(256, self.isolines)
         self.dtf = Distance_map_to_isoline_features(self.isolines, halfway_value=0.5)
-        self.normalizer = MacenkoNormalizer(backend="numpy")
+        self.normalizer = torchstain.normalizers.MacenkoNormalizer(backend="numpy")
         self.normalizer.HERef = np.array(
             [
                 [0.47262014, 0.17700575],
@@ -86,7 +86,7 @@ class DCF:
         
         img_support_array = np.transpose(img_support.cpu().detach().numpy()[0],[1,2,0])
         img_support_array, _ = self.normalizer.normalize((img_support_array*255).astype(np.uint8), stains=True)
-        img_suppor_array = img_support_array/255
+        img_support_array = img_support_array/255
         mask_support_array = cv2.fillPoly(np.zeros(img_support_array.shape[:-1]), [polygon_support], 1)[None, None]
         
         with torch.no_grad():

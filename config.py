@@ -10,3 +10,8 @@ if path_data != None:
     path_images = os.path.join(path_data,'images')
     path_masks = os.path.join(path_data,'masks')
     path_scores = os.path.join(path_dcf,'scores')
+    pathes = [path_slides, path_images, path_masks]
+    
+    for path in pathes:
+        if not os.path.exists(path):
+            os.makedirs(path)

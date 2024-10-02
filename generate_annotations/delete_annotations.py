@@ -9,12 +9,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import logging
 import sys
-from argparse import ArgumentParser
-
 from shapely.geometry import Point, box
 
 from cytomine import Cytomine
-from cytomine.models import Property, Annotation, AnnotationTerm, AnnotationCollection
+from cytomine.models import  AnnotationCollection
 import os
 
 logging.basicConfig()

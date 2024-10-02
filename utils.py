@@ -10,6 +10,10 @@ import torch
 import torch.nn.functional as F
 from torch_contour.torch_contour import Contour_to_mask, Contour_to_distance_map
 from torch import cdist
+
+
+def piecewise_linear(x, x0, y0, k1, k2):
+    return np.piecewise(x, [x < x0], [lambda x:k1*x + y0-k1*x0, lambda x:k2*x + y0-k2*x0])
 class Contour_to_features(torch.nn.Module):
     """
     A PyTorch neural network module designed to convert contour data into feature representations.
@@ -32,7 +36,7 @@ class Contour_to_features(torch.nn.Module):
             An instance of the Mask_to_features class.
         """
         super(Contour_to_features, self).__init__()
-        self.ctm = Contour_to_mask(size).requires_grad_(False)
+        self.ctm = Contour_to_mask(size,k=1e4).requires_grad_(False)
         self.mtf = Mask_to_features().requires_grad_(False)
 
 
@@ -73,7 +77,7 @@ class Mask_to_features(Module):
         """
         super(Mask_to_features, self).__init__()
 
-    def forward(self, activations: dict, mask: torch.Tensor):
+    def forward(self, activations: dict, mask: torch.Tensor, eps=1e-3):
         """
         Defines the forward pass of the Mask_to_features model.
 
@@ -107,7 +111,7 @@ class Mask_to_features(Module):
                 size=(activations[i].shape[-2], activations[i].shape[-1]),
                 mode="bilinear",
             )
-            for i in range(5)
+            for i in range(len(activations))
         ]
 
         features_inside, features_outside = [], []
@@ -116,12 +120,12 @@ class Mask_to_features(Module):
 
             features_inside.append(
                 torch.sum(activations[i] * masks[i], dim=(2, 3))
-                / (torch.sum(masks[i], (2, 3)) + 1e-5)
+                / (torch.sum(masks[i], (2, 3)) + eps)
             )
 
             features_outside.append(
                 torch.sum(activations[i] * (1 - masks[i]), dim=(2, 3))
-                / (torch.sum((1 - masks[i]), (2, 3)) + 1e-5)
+                / (torch.sum((1 - masks[i]), (2, 3)) + eps)
             )
 
         return features_inside, features_outside

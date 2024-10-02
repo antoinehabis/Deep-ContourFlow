@@ -8,7 +8,7 @@ import numpy as np
 import cv2
 from scipy.ndimage import binary_closing
 from skimage.morphology import disk
-from histolab.slide import Slide
+# from histolab.slide import Slide
 
 
 
