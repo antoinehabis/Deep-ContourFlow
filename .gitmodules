@@ -1,4 +1,0 @@
-
-[submodule "isect_segments_bentley_ottmann"]
-	path = isect_segments_bentley_ottmann
-	url = https://github.com/ideasman42/isect_segments-bentley_ottmann
