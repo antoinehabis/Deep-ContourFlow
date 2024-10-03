@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from config import *
-from algorithms.dcf_distance_map import DCF
+from algorithms.oneshot_dcf import DCF
 from utils import  row_to_filename, preprocess_contour
 from tqdm import tqdm
 import pandas as pd

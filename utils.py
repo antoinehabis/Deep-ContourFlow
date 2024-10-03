@@ -8,7 +8,7 @@ import cv2
 from torch.nn import Module
 import torch
 import torch.nn.functional as F
-from torch_contour.torch_contour import Contour_to_mask, Contour_to_distance_map
+from torch_contour import *
 from torch import cdist
 
 
@@ -131,28 +131,26 @@ class Mask_to_features(Module):
         return features_inside, features_outside
 
 
-def augmentation(img, mask):
-    img = img.reshape((-1, img.shape[0], img.shape[1],3))
-    mask = mask.reshape((1, mask.shape[0], mask.shape[1],-1))
+def augmentation(img, mask, distance_map):
 
     ps = np.random.random(10)
 
     if ps[0] > 1 / 4 and ps[0] < 1 / 2:
-        img, mask = np.rot90(img, axes=[1, 2], k=1), np.rot90(mask, axes=[1, 2], k=1)
+        img, mask, distance_map = torch.rot90(img, dims=[-2, -1], k=1), torch.rot90(mask, dims=[-2, -1], k=1), torch.rot90(distance_map, dims=[-2, -1], k=1)
 
     if ps[0] > 1 / 2 and ps[0] < 3 / 4:
-        img, mask = np.rot90(img, axes=[1, 2], k=2), np.rot90(mask, axes=[1, 2], k=2)
+        img, mask, distance_map = torch.rot90(img, dims=[-2, -1], k=2), torch.rot90(mask, dims=[-2, -1], k=2), torch.rot90(distance_map, dims=[-2, -1], k=2)
 
     if ps[0] > 3 / 4 and ps[0] < 1:
-        img, mask = np.rot90(img, axes=[1, 2], k=3), np.rot90(mask, axes=[1, 2], k=3)
+        img, mask, distance_map = torch.rot90(img, dims=[-2, -1], k=3), torch.rot90(mask, dims=[-2, -1], k=3), torch.rot90(distance_map, dims=[-2, -1], k=3)
 
     if ps[1] > 0.5:
-        img, mask = np.flip(img, 1), np.flip(mask, 1)
+        img, mask, distance_map = torch.flip(img, [-1]), torch.flip(mask, [-1]), torch.flip(distance_map, [-1])
 
     if ps[2] > 0.5:
-        img, mask = np.flip(img, 2), np.flip(mask, 2)
+        img, mask, distance_map = torch.flip(img, [-2]), torch.flip(mask, [-2]), torch.flip(distance_map, [-2])
 
-    return img, mask
+    return img, mask, distance_map
 
 
 ##### Change the doc
@@ -179,8 +177,8 @@ class Contour_to_isoline_features(torch.nn.Module):
         """
         super(Contour_to_isoline_features, self).__init__()
         self.ctd = Contour_to_distance_map(size).requires_grad_(False)
-        self.dtf = Distance_map_to_isoline_features(isolines, halfway_value).requires_grad_(False)
         self.compute_features_mask = compute_features_mask
+        self.dtf = Distance_map_to_isoline_features(isolines, halfway_value).requires_grad_(False)
 
     def forward(self, contour, activations):
         """
@@ -234,11 +232,11 @@ class Distance_map_to_isoline_features(Module):
         self.vars = self.mean_to_var(self.isolines, halfway_value)  # Store the variance tensor.
 
     def mean_to_var(self, isolines, halfway_value):
-
+    
         mat = cdist(isolines[:, None], isolines[:, None]) ** 2
         mat = torch.where(mat == 0, torch.tensor(float('inf')), mat)
-        masked_a = -torch.min(mat, 0) / (
-            8 * torch.log(halfway_value)
+        masked_a = -torch.amin(mat, 0) / (
+            8 * np.log(halfway_value)
         )
         return masked_a
     
@@ -261,12 +259,12 @@ class Distance_map_to_isoline_features(Module):
             If the user wants to select each feature extracted by the model at each scale, activations(i) should contain the feature extracted at scale i.
         
         distance_map: torch.Tensor
-            A tensor with shape (B, 1, H, W)
-            The tensor represents a batch of distance maps.
+            A tensor with shape (B, N, H, W)
+            The tensor represents a batch of sets of N distance maps per sample.
         
         mask: torch.Tensor:
-            A tensor with shape (B, 1, H, W)
-            the mask of each contour  in the batch.
+            A tensor with shape (B, N, H, W)
+            the mask of each contour of each sample in the batch.
 
         compute_features_mask: (bool, optional)
             If True, compute additional aggregated features inside the masks for each features in activations.
@@ -280,10 +278,12 @@ class Distance_map_to_isoline_features(Module):
         features_mask:list
             A list of aggregated features inside the mask for each features in activations (if compute_features_mask is True).
         """
-        
+        self.device = mask.device
+        if str(self.device) == "cuda:0":
+            self.isolines, self.vars = self.isolines.cuda(), self.vars.cuda()
         # Number of scales in the activations dictionary
         nb_scales = len(activations)
-        
+
         # Apply Gaussian-like weighting to isolines based on distance_map and variance
         isolines = mask * torch.exp(
             -((self.isolines[None, :, None, None] - distance_map) ** (2)) 
@@ -317,10 +317,9 @@ class Distance_map_to_isoline_features(Module):
         # Loop through each scale and compute features
         for i in range(nb_scales):
 
-
             # Compute feature aggregation at scale 'i' by summing over the spatial dimensions,
             # weighted by the isolines, and normalizing by the sum of isolines
-            f_s_i = (activations[i][:,:,None] * isolines_scales[i][:,None]).sum(dim=[-2,-1]) / isolines_scales[i].sum(dim=[-2,-1])[..., None]
+            f_s_i = (activations[i][:,:,None] * isolines_scales[i][:,None]).sum(dim=[-2,-1]) / isolines_scales[i].sum(dim=[-2,-1])[:, None]
             features_isolines.append(f_s_i)
 
             # If compute_features_mask is True, compute and store features based on masks

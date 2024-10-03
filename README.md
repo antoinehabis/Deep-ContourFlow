@@ -28,7 +28,7 @@ if you use the the code please cite the following paper:
 
 To use this repository please first install torch-contour:
 ```
-$pip install torch_contour
+$pip install torch_contour==1.3.0
 ```
 
 ## Unsupervised Deep ContourFLow:
