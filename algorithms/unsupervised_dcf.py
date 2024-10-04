@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 from utils import *
-
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import torchvision.models as models
 from torchvision import transforms
@@ -15,7 +14,7 @@ preprocess = transforms.Compose(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
-vgg16 = models.vgg16(pretrained=True)
+vgg16 = models.vgg16(weights="DEFAULT")
 VGG16 = vgg16.features
 
 
@@ -28,10 +27,60 @@ class DCF:
         clip=1e-1,
         exponential_decay=0.998,
         thresh=1e-2,
-        weights=[1, 1, 1, 1, 1],
         area_force=0.0,
         sigma=1,
     ):
+        """
+        This class implements the unsupervised version of DCF.
+        It moves the contour over time in order to push as far away as possible the features inside and outside the contour.
+
+
+        Parameters:
+        -----------
+        n_epochs : int
+
+            The maximum number of gradient descent during the predict step.
+
+        model: torch.nn.Module
+
+            The pretrained model from which the activations will be extracted.
+            This model can be any model as long as the activations have shape (B,C,H,W).
+            Note that for each model you choose to work with you will have to specify which activations of the model you wan to use.
+            For example is you are interested  in the activations from the 3rd, 8th, 15th, 22th, 29th layers of the model VGG16 please write
+
+            >>> self.model[3].register_forward_hook(self.get_activations(0))
+            >>> self.model[8].register_forward_hook(self.get_activations(1))
+            >>> self.model[15].register_forward_hook(self.get_activations(2))
+            >>> self.model[22].register_forward_hook(self.get_activations(3))
+            >>> self.model[29].register_forward_hook(self.get_activations(4))
+
+            You don't have to use 5 layers but we do in the paper.
+
+        learning_rate: float
+
+            The value of the gradient step.
+
+        clip: float
+
+            the value to set in order to clip the norm of th gradient of the contour so that is doesn't move too far.
+
+        exponential_decay: float
+
+            The exponential decay of the learning_rate.
+
+        thresh: float
+
+            If the maximum of the norm of the gradient of the contour over each node does not exceed thresh, we stop the contour evolution.
+
+        area_force:
+
+            The weights of the area constraint of the contour in the loss
+
+        sigma: float
+
+            The standard deviation of the gaussian smoothing operator.
+
+        """
         super(DCF, self).__init__()
 
         self.n_epochs = n_epochs
@@ -50,7 +99,6 @@ class DCF:
         self.ed = exponential_decay
         self.thresh = thresh
         self.lambda_area = area_force
-        self.weights = weights / np.sum(weights)
         self.smooth = Smoothing(sigma)
         self.cleaner = CleanContours()
         self.device = None
@@ -144,6 +192,9 @@ class DCF:
         _ = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
         contour.requires_grad_()
+
+        self.weights = [1 / (2**i) for i in range(len(self.activations))]
+        self.weights = self.weights / np.sum(self.weights)
 
         print("Contour is evolving please wait a few moment...")
 

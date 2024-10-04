@@ -122,15 +122,18 @@ class Mask_to_features(Module):
         for i in range(len(activations)):
 
             features_inside.append(
-                torch.sum(activations[i] * masks[i], dim=(2, 3))
-                / (torch.sum(masks[i], (2, 3)) + eps)
+                (
+                    torch.sum(activations[i] * masks[i], dim=(2, 3))
+                    / (torch.sum(masks[i], (2, 3)) + eps)
+                )[:, None]
             )
 
             features_outside.append(
-                torch.sum(activations[i] * (1 - masks[i]), dim=(2, 3))
-                / (torch.sum((1 - masks[i]), (2, 3)) + eps)
+                (
+                    torch.sum(activations[i] * (1 - masks[i]), dim=(2, 3))
+                    / (torch.sum((1 - masks[i]), (2, 3)) + eps)
+                )[:, None]
             )
-
         return features_inside, features_outside
 
 
@@ -266,7 +269,6 @@ class Distance_map_to_isoline_features(Module):
         )  # Store the variance tensor.
 
     def mean_to_var(self, isolines, halfway_value):
-
         mat = cdist(isolines[:, None], isolines[:, None]) ** 2
         mat = torch.where(mat == 0, torch.tensor(float("inf")), mat)
         masked_a = -torch.amin(mat, 0) / (8 * np.log(halfway_value))
@@ -306,6 +308,9 @@ class Distance_map_to_isoline_features(Module):
 
         features_isolines: list
             A list of aggregated features at each isoline for each feature in activations.
+            Note that:
+                - len(features_isolines) = len(activations)
+                - features_isolines[i] has shape (B,I,C_i)
 
         features_mask:list
             A list of aggregated features inside the mask for each features in activations (if compute_features_mask is True).
@@ -322,6 +327,7 @@ class Distance_map_to_isoline_features(Module):
             -((self.isolines[None, :, None, None] - distance_map) ** (2))
             / (self.vars[None, :, None, None])
         )
+        # print(isolines.shape)
 
         # Resize the isolines to match each activation scale, using bilinear interpolation
         isolines_scales = [
@@ -358,18 +364,23 @@ class Distance_map_to_isoline_features(Module):
 
             # Compute feature aggregation at scale 'i' by summing over the spatial dimensions,
             # weighted by the isolines, and normalizing by the sum of isolines
-            f_s_i = (activations[i][:, :, None] * isolines_scales[i][:, None]).sum(
+
+            f_s_i = (activations[i][:, None] * isolines_scales[i][:, :, None]).sum(
                 dim=[-2, -1]
-            ) / isolines_scales[i].sum(dim=[-2, -1])[:, None]
+            ) / isolines_scales[i].sum(dim=[-2, -1])[..., None]
             features_isolines.append(f_s_i)
 
             # If compute_features_mask is True, compute and store features based on masks
             if compute_features_mask:
                 features_mask.append(
-                    torch.sum(
-                        activations[i] * masks[i], dim=(-2, -1)
-                    )  # Compute masked feature aggregation
-                    / torch.sum(masks[i], dim=(-2, -1))  # Normalize by mask's sum
+                    (
+                        torch.sum(
+                            activations[i] * masks[i], dim=(-2, -1)
+                        )  # Compute masked feature aggregation
+                        / torch.sum(masks[i], dim=(-2, -1))
+                    )[
+                        :, None
+                    ]  # Normalize by mask's sum
                 )
 
         # Return the features and features_mask (if computed)

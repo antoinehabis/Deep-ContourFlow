@@ -14,7 +14,7 @@ preprocess = transforms.Compose(
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ]
 )
-vgg16 = models.vgg16(pretrained=True)
+vgg16 = models.vgg16(weights="DEFAULT")
 VGG16 = vgg16.features
 
 
@@ -24,21 +24,84 @@ class DCF:
         n_epochs=100,
         nb_augment=100,
         model=VGG16,
-        isolines=np.array([0.1, 0.2, 0.4, 0.6, 0.8, 1.0]),
         sigma=7,
         learning_rate=5e-2,
         clip=1e-1,
         exponential_decay=0.998,
         thresh=1e-2,
-        weights=0.9,
+        isolines=None,
+        isoline_weights=None,
     ):
+        """
+        This classimplements the one shot version of DCF. It contains a fit and a predict step.
+        The fit step aims a capturing  the features of the support image in the support contour.
+        The predict step aims at evolving an initial contour so that the features match as more as possible to the ones of the support
+
+
+        Parameters:
+        -----------
+        n_epochs : int
+
+            The maximum number of gradient descent during the predict step.
+
+        nb_augment : int
+
+            The number of augmentations applied to the support image during the fitting step.
+            Note that if you want to apply your own augmentations please go to utils.py and modify the augmentation method.
+
+        model: torch.nn.Module
+
+            The pretrained model from which the activations will be extracted.
+            This model can be any model as long as the activations have shape (B,C,H,W).
+            Note that for each model you choose to work with you will have to specify which activations of the model you wan to use.
+            For example is you are interested  in the activations from the 3rd, 8th, 15th, 22th, 29th layers of the model VGG16 please write
+
+            >>> self.model[3].register_forward_hook(self.get_activations(0))
+            >>> self.model[8].register_forward_hook(self.get_activations(1))
+            >>> self.model[15].register_forward_hook(self.get_activations(2))
+            >>> self.model[22].register_forward_hook(self.get_activations(3))
+            >>> self.model[29].register_forward_hook(self.get_activations(4))
+
+            You don't have to use 5 layers but we do in the paper.
+
+        sigma: float
+
+            The standard deviation of the gaussian smoothing operator.
+
+        learning_rate: float
+
+            The value of the gradient step.
+
+        clip: float
+
+            the value to set in order to clip the norm of th gradient of the contour so that is doesn't move too far.
+
+        exponential_decay: float
+
+            The exponential decay of the learning_rate.
+
+        thresh: float
+
+            If the maximum of the norm of the gradient of the contour over each node does not exceed thresh, we stop the contour evolution.
+
+        isolines: List[float]
+
+            Values in the list must be in the range [0,1]
+            If provided, DCF will use the isolines centered on the values inside the list and use them to move the contour over time.
+            If None, DCF won't use any isoline and will move the contour using the aggregation of the features inside the mask corresponding to the contour.
+
+        isoline_weights: List[float],
+
+            The correpsonding weights values w_i for each isoline  in isolines when computing the loss.
+
+        """
+
         super(DCF, self).__init__()
 
         self.n_epochs = n_epochs
         self.nb_augment = nb_augment
         self.model = model
         self.activations = {}
-        self.isolines = torch.from_numpy(isolines)
         self.model[3].register_forward_hook(self.get_activations(0))
         self.model[8].register_forward_hook(self.get_activations(1))
         self.model[15].register_forward_hook(self.get_activations(2))
@@ -49,10 +112,25 @@ class DCF:
         self.ed = exponential_decay
         self.thresh = thresh
         self.smooth = Smoothing(sigma)
-        self.ctf = Contour_to_isoline_features(
-            256, halfway_value=0.5, isolines=self.isolines
-        )
-        self.dtf = Distance_map_to_isoline_features(self.isolines, halfway_value=0.5)
+        self.isolines = isolines
+
+        if self.isolines == None:
+            self.ctf = Contour_to_features(256)
+            self.nb_iso = 1
+            self.isoline_weights = torch.tensor(1.0)
+        else:
+            self.isolines = torch.tensor(isolines, dtype=torch.float32)
+            self.isoline_weights = torch.tensor(isoline_weights, dtype=torch.float32)
+
+            self.ctf = Contour_to_isoline_features(
+                256, halfway_value=0.5, isolines=self.isolines
+            )
+
+            self.dtf = Distance_map_to_isoline_features(
+                self.isolines, halfway_value=0.5
+            )
+            self.nb_iso = len(self.isolines)
+
         self.normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
         self.normalizer.HERef = np.array(
             [
@@ -62,7 +140,6 @@ class DCF:
             ]
         )
         self.normalizer.maxCRef = np.array([1.43072807, 0.98501085])
-        self.isoline_weights = torch.tensor([weights, (1 - weights)])
         self.cleaner = CleanContours()
 
     def get_activations(self, name: str):
@@ -136,10 +213,11 @@ class DCF:
                                A 2D tensor of shape `(B, N)` representing the isoline-wise loss per sample,
                                averaged across scales.
         """
+        print(features_isolines)
         batch_size = features_isolines[0].shape[0]
         loss_scales = torch.zeros((batch_size, len(self.activations)))
-        loss_scales_isos = torch.zeros(
-            (batch_size, len(self.activations), len(self.isolines))
+        loss_scales_isos_batch = torch.zeros(
+            (batch_size, len(self.activations), self.nb_iso)
         )
 
         if str(self.device) == "cuda:0":
@@ -148,16 +226,15 @@ class DCF:
                 self.isoline_weights.cuda(),
             )
         for j in range(len(features_isolines)):
+
             difference_features = (
                 features_isolines[j] - self.features_isolines_support[j]
             )
-            lsi = torch.sqrt(torch.norm(difference_features, dim=-2))
+            lsi = torch.sqrt(torch.norm(difference_features, dim=-1))
+            loss_scales_isos_batch[:, j] = lsi
+            loss_scales[:, j] = torch.mean(self.isoline_weights * lsi, dim=-1)
 
-            loss_scales_isos[:, j], loss_scales[:, j] = lsi, torch.mean(
-                self.isoline_weights * lsi, dim=-1
-            )
-        loss_batch = torch.mean(loss_scales, dim=1)
-        loss_scales_isos_batch = torch.mean(loss_scales_isos, dim=1)
+        loss_batch = torch.mean(loss_scales, dim=-1)
         return loss_batch, loss_scales_isos_batch
 
     def fit(self, img_support, polygon_support, augment=True):
@@ -184,25 +261,46 @@ class DCF:
                     )
                     if str(self.device) == "cuda:0":
                         self.model = self.model.cuda()
-                        _ = self.model(preprocess(img_augmented))
+                    _ = self.model(preprocess(img_augmented))
 
                     if i == 0:
-                        self.features_isolines_support, self.features_mask_support = (
-                            self.dtf(
+                        if self.isolines == None:
+                            self.mtf = Mask_to_features().requires_grad_(False)
+
+                            (
+                                self.features_isolines_support,
+                                self.features_mask_support,
+                            ) = self.mtf(self.activations, mask_augmented)
+                        else:
+
+                            (
+                                self.features_isolines_support,
+                                self.features_mask_support,
+                            ) = self.dtf(
                                 self.activations,
                                 distance_map_support_augmented,
                                 mask_augmented,
                                 compute_features_mask=True,
                             )
-                        )
 
                     else:
-                        tmp, tmp_mask = self.dtf(
-                            self.activations,
-                            distance_map_support_augmented,
-                            mask_augmented,
-                            compute_features_mask=True,
-                        )
+                        if self.isolines == None:
+                            (
+                                tmp,
+                                tmp_mask,
+                            ) = self.mtf(self.activations, mask_augmented)
+
+                        else:
+
+                            (
+                                tmp,
+                                tmp_mask,
+                            ) = self.dtf(
+                                self.activations,
+                                distance_map_support_augmented,
+                                mask_augmented,
+                                compute_features_mask=True,
+                            )
 
                         for j, u in enumerate(zip(tmp, tmp_mask)):
                             self.features_isolines_support[j] += u[0]
@@ -245,15 +343,21 @@ class DCF:
 
         b = features_mask_query[0].shape[0]
         score = torch.zeros((len(self.activations), b))
+
         for i in range(len(self.activations)):
 
             cos = (
                 self.weights[i]
-                * self.features_mask_support[i]
-                @ features_mask_query[i].T.to(torch.float32)
+                * torch.sum(
+                    self.features_mask_support[i]
+                    * features_mask_query[i].to(torch.float32),
+                    dim=-1,
+                )
                 / (
-                    torch.linalg.norm(self.features_mask_support[i])
-                    * torch.linalg.norm(features_mask_query[i]).to(torch.float32)
+                    torch.linalg.norm(self.features_mask_support[i], dim=-1)
+                    * torch.linalg.norm(features_mask_query[i], dim=-1).to(
+                        torch.float32
+                    )
                 )
             )
 
@@ -304,11 +408,11 @@ class DCF:
             (self.n_epochs, batch_size, contours_query.shape[-2], 2)
         )
         loss_scales_isos = np.zeros(
-            (self.n_epochs, batch_size, len(self.activations), len(self.isolines))
+            (self.n_epochs, batch_size, len(self.activations), self.nb_iso)
         )
-        scale = torch.tensor(
-            [512.0, 512.0], device="cuda", dtype=torch.float32
-        ) / torch.tensor([h, w].copy(), device="cuda", dtype=torch.float32)
+        scale = torch.tensor([512.0, 512.0], dtype=torch.float32) / torch.tensor(
+            [h, w].copy(), dtype=torch.float32
+        )
 
         # for i in range(batch_size):
         #     normalized_img, _, _ = self.normalizer.normalize((imgs_query*255).to(torch.int)[i], stains=True)
@@ -327,11 +431,14 @@ class DCF:
         #### pass image into neural network and get features
         if str(self.device) == "cuda:0":
             self.model = self.model.cuda()
-            _ = self.model(preprocess(imgs_query))
-            contours_query = contours_query.cuda()
+            scale = scale.cuda()
+        _ = self.model(preprocess(imgs_query))
 
         #### Begin the gradient descent
         for i in range(self.n_epochs):
+            if str(self.device) == "cuda:0":
+                contours_query = contours_query.cuda()
+
             features_isoline_query, _ = self.ctf(contours_query, self.activations)
             loss_batch, loss_scales_isos_batch = self.multi_scale_multi_isoline_loss(
                 features_isoline_query
@@ -340,9 +447,7 @@ class DCF:
             loss_batch[~stop].backward(inputs=contours_query)
             losses[i] = loss_all.cpu().detach().numpy()
             epochs_contours_query[i] = contours_query.cpu().detach().numpy()
-            loss_scales_isos[i] = (
-                torch.mean(loss_scales_isos_batch, dim=0).cpu().detach().numpy()
-            )
+            loss_scales_isos[i] = loss_scales_isos_batch.cpu().detach().numpy()
             norm_grad = torch.unsqueeze(torch.norm(contours_query.grad, dim=-1), -1)
             clipped_norm = torch.clip(norm_grad, 0, self.clip)
             stop = (torch.amax(norm_grad[:, 0], dim=-2) < self.thresh)[-1]
@@ -362,7 +467,8 @@ class DCF:
                 interpolated_contour = self.cleaner.clean_contours_and_interpolate(
                     contours_query.cpu().detach().numpy()
                 )
-                contours_query = torch.from_numpy(interpolated_contour).cuda()
+                contours_query = torch.from_numpy(interpolated_contour)
+
                 contours_query.grad = None
                 contours_query.requires_grad = True
 
@@ -373,6 +479,7 @@ class DCF:
         ##### Calculate score after gradient descent
         self.ctf.compute_features_mask = True
         _, features_mask_query = self.ctf(contours_query, self.activations)
+        print(features_mask_query[0].shape)
         scores = self.similarity_score(features_mask_query).cpu().detach().numpy()
 
         contours_query = np.roll(contours_query.cpu().detach().numpy(), 1, -1)
