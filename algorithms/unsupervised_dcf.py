@@ -1,13 +1,14 @@
 import sys
 from pathlib import Path
 from utils import *
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import torchvision.models as models
 from torchvision import transforms
 import torch
 from torch_contour import CleanContours, Smoothing, area
 from scipy import optimize
-
+import time
 
 preprocess = transforms.Compose(
     [
@@ -26,7 +27,6 @@ class DCF:
         learning_rate=5e-2,
         clip=1e-1,
         exponential_decay=0.998,
-        thresh=1e-2,
         area_force=0.0,
         sigma=1,
     ):
@@ -97,7 +97,6 @@ class DCF:
         self.clip = clip
         self.shapes = {}
         self.ed = exponential_decay
-        self.thresh = thresh
         self.lambda_area = area_force
         self.smooth = Smoothing(sigma)
         self.cleaner = CleanContours()
@@ -133,13 +132,14 @@ class DCF:
         batch_size = features[0][0].shape[0]
         features_inside, features_outside = features
         nb_scales = len(features_inside)
-        weights = torch.tensor(weights, device=self.device).requires_grad_(False)
         energies = torch.zeros((nb_scales, batch_size), device=self.device)
 
         for j in range(len(features_inside)):
             norm_mse = -torch.linalg.vector_norm(
-                features_inside[j] - features_outside[j], 2, dim=-1
-            ) / (torch.linalg.vector_norm(self.activations[j], 2, dim=(1, 2, 3)) + eps)
+                features_inside[j] - features_outside[j], 2, dim=-2
+            )[..., 0] / (
+                torch.linalg.vector_norm(self.activations[j], 2, dim=(1, 2, 3)) + eps
+            )
             energies[j] = norm_mse  ##norm_mse has shape b
         fin = torch.sum(energies * weights[..., None], axis=0)
         return fin
@@ -173,7 +173,7 @@ class DCF:
         Exception
             If the image tensor is not of type float32.
         """
-        self.Ctf = Contour_to_features(img.shape[-1] // (2**2))
+
         self.device = contour_init.device
         self.img_dim = torch.tensor(img.shape[-2:], device=self.device)
         stop = False
@@ -191,52 +191,46 @@ class DCF:
             self.model = self.model.cuda()
         _ = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
-        contour.requires_grad_()
+        contour.requires_grad = True
+        self.ctf = Contour_to_features(img.shape[-1] // (2**2), self.activations)
 
         self.weights = [1 / (2**i) for i in range(len(self.activations))]
         self.weights = self.weights / np.sum(self.weights)
-
+        self.weights = torch.tensor(self.weights, device=self.device)
+        self.weights.requires_grad = False
         print("Contour is evolving please wait a few moment...")
-
         for i in range(self.n_epochs):
-            features = self.Ctf(contour, self.activations)
-            loss = self.multiscale_loss(
-                features, self.weights
-            ) + self.lambda_area * area(contour)
 
-            loss_history[:, i] = loss.cpu().detach().numpy()
-            batch_loss = torch.mean(loss)
-            batch_loss.backward(inputs=contour)
+            features = self.ctf(contour)
+            batch_loss = (
+                self.multiscale_loss(features, self.weights)
+                + self.lambda_area * area(contour)[:, 0]
+            )
+            loss = img.shape[0] * torch.mean(batch_loss)
+            loss.backward(inputs=contour)
+            loss_history[:, i] = batch_loss.cpu().detach().numpy()
+
             norm_grad = torch.linalg.vector_norm(contour.grad, dim=-1, keepdim=True)
-            stop = torch.max(norm_grad) < self.thresh
             contour_history.append(contour.cpu().detach().numpy())
-            if stop == False:
-                with torch.no_grad():
-                    clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
-                    gradient_direction = (
-                        contour.grad * clipped_norm / (norm_grad + 1e-8)
-                    )
-                    gradient_direction = self.smooth(
-                        gradient_direction.to(torch.float32)
-                    )
+            with torch.no_grad():
+                clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
+                gradient_direction = contour.grad * clipped_norm / (norm_grad + 1e-8)
+                gradient_direction = self.smooth(gradient_direction.to(torch.float32))
 
-                    contour = (
-                        contour
-                        - scale * self.learning_rate * (self.ed**i) * gradient_direction
-                    )
+                contour = (
+                    contour
+                    - scale * self.learning_rate * (self.ed**i) * gradient_direction
+                )
 
-                    contour_without_loops = self.cleaner.clean_contours_and_interpolate(
-                        contour.cpu().detach().numpy()
-                    )
+                contour_without_loops = self.cleaner.clean_contours_and_interpolate(
+                    contour.cpu().detach().numpy()
+                )
 
                 contour = torch.clip(torch.from_numpy(contour_without_loops), 0, 1)
                 if str(self.device) == "cuda:0":
                     contour = contour.cuda()
                 contour.grad = None
-                contour.requires_grad_()
-            else:
-                print("The stopping criterion was reached")
-                break
+                contour.requires_grad = True
 
         contour_history = np.roll(np.stack(contour_history), axis=-1, shift=-1)[:, :, 0]
         contour_history = (
@@ -247,8 +241,17 @@ class DCF:
             (contour_init.shape[0], contour_init.shape[-2], contour_init.shape[-1])
         )
         for i, loss in enumerate(loss_history):
-            p, _ = optimize.curve_fit(piecewise_linear, np.arange(loss.shape[0]), loss)
-            index_stop = p[0].astype(int) + 1
+            p, _ = optimize.curve_fit(
+                piecewise_linear,
+                np.arange(loss.shape[0]),
+                loss,
+                bounds=(
+                    np.array([0, -np.inf, -np.inf, -np.inf]),
+                    np.array([len(loss), np.inf, np.inf, np.inf]),
+                ),
+            )
+            index_stop = np.max(p[0].astype(int) - 1, 0)
             final_contours[i] = contour_history[index_stop, i]
         print("Contour stopped")
+
         return contour_history, loss_history, final_contours
