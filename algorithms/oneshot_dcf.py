@@ -8,6 +8,7 @@ import torchstain
 from tqdm import tqdm
 from utils import *
 from typing import List, Tuple
+from torch_contour import area
 
 preprocess = transforms.Compose(
     [
@@ -31,6 +32,7 @@ class DCF:
         thresh=1e-2,
         isolines=None,
         isoline_weights=None,
+        lambda_area=1e-4,
     ):
         """
         This classimplements the one shot version of DCF. It contains a fit and a predict step.
@@ -114,7 +116,7 @@ class DCF:
         self.smooth = Smoothing(sigma)
         self.isolines = isolines
         self.isoline_weights = isoline_weights
-
+        self.lambda_area = lambda_area
         self.normalizer = torchstain.normalizers.MacenkoNormalizer(backend="torch")
         self.normalizer.HERef = np.array(
             [
@@ -223,11 +225,12 @@ class DCF:
         self.device = img_support.device
         if img_support.dtype != torch.float32:
             raise Exception("tensor must be of type float32")
-
-        ctd = Contour_to_distance_map(size=512)
+        size = img_support.shape[-1]
+        ctd = Contour_to_distance_map(size=size)
         distance_map_support, mask_support = ctd(polygon_support, return_mask=True)
 
         with torch.no_grad():
+            print('fitting dcf one shot...')
             for i in tqdm(range(self.nb_augment)):
                 img_augmented, mask_augmented, distance_map_support_augmented = (
                     augmentation((img_support, mask_support, distance_map_support))
@@ -235,7 +238,6 @@ class DCF:
 
                 if str(self.device) == "cuda:0":
                     self.model = self.model.cuda()
-                    _ = self.model(preprocess(img_augmented))
                     if self.isolines != None:
                         self.isolines = torch.tensor(
                             self.isolines, dtype=torch.float32
@@ -244,18 +246,23 @@ class DCF:
                             self.isoline_weights, dtype=torch.float32
                         ).cuda()
 
+                _ = self.model(preprocess(img_augmented))
+
                 if self.isolines is None:
                     class_feature_extractor = Mask_to_features(
                         self.activations
                     ).requires_grad_(False)
                     self.nb_iso = 1
                     self.isoline_weights = torch.tensor(1.0)
-                    self.ctf = Contour_to_features(256, self.activations)
+                    self.ctf = Contour_to_features(size // (2**2), self.activations)
                     input_ = (mask_augmented,)
                 else:
                     self.nb_iso = self.isolines.shape[0]
                     self.ctf = Contour_to_isoline_features(
-                        256, self.activations, halfway_value=0.5, isolines=self.isolines
+                        size // (2**2),
+                        self.activations,
+                        halfway_value=0.5,
+                        isolines=self.isolines,
                     )
                     class_feature_extractor = Distance_map_to_isoline_features(
                         self.activations, halfway_value=0.5, isolines=self.isolines
@@ -368,6 +375,7 @@ class DCF:
                          Energy values recorded over epochs, representing isoline-wise losses across layers,
                          shape `(n_epochs, B, num_activations, num_isolines)`.
         """
+        b = contours_query.shape[0]
         self.nb_points = contours_query.shape[-2]
         batch_size, _, h, w = imgs_query.shape
         stop = torch.zeros(batch_size, dtype=torch.bool)
@@ -388,10 +396,9 @@ class DCF:
         #     imgs_query[i] = normalized_img/255
 
         contours_query_array = contours_query.cpu().detach().numpy()
-        contours_query_array = contours_query_array / np.flip([h, w])
         contours_query_array = self.cleaner.clean_contours_and_interpolate(
             contours_query_array
-        )
+        ).clip(0, 1)
         contours_query = torch.from_numpy(
             np.roll(contours_query_array, axis=1, shift=1)
         )
@@ -404,15 +411,18 @@ class DCF:
             contours_query = contours_query.cuda()
         _ = self.model(preprocess(imgs_query))
 
+        print('Contour is evolving please wait a few moments...')
         #### Begin the gradient descent
-        for i in range(self.n_epochs):
-            print(contours_query)
+        for i in tqdm(range(self.n_epochs)):
+
             features_isoline_query, _ = self.ctf(contours_query)
             loss_batch, loss_scales_isos_batch = self.multi_scale_multi_isoline_loss(
                 features_isoline_query
             )
-            loss_all = torch.mean(loss_batch)
-            loss_batch[~stop].backward(inputs=contours_query)
+            loss_all = b * torch.mean(
+                loss_batch + self.lambda_area * area(contours_query)[:, 0]
+            )
+            loss_all.backward(inputs=contours_query)
             losses[i] = loss_all.cpu().detach().numpy()
             epochs_contours_query[i] = contours_query.cpu().detach().numpy()
             loss_scales_isos[i] = loss_scales_isos_batch.cpu().detach().numpy()
@@ -435,7 +445,9 @@ class DCF:
                 interpolated_contour = self.cleaner.clean_contours_and_interpolate(
                     contours_query.cpu().detach().numpy()
                 )
-                contours_query = torch.from_numpy(interpolated_contour)
+                contours_query = torch.clip(
+                    torch.from_numpy(interpolated_contour), 0, 1
+                )
 
                 contours_query.grad = None
                 contours_query.requires_grad = True

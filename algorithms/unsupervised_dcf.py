@@ -8,7 +8,7 @@ from torchvision import transforms
 import torch
 from torch_contour import CleanContours, Smoothing, area
 from scipy import optimize
-import time
+from tqdm import tqdm
 
 preprocess = transforms.Compose(
     [
@@ -199,14 +199,13 @@ class DCF:
         self.weights = torch.tensor(self.weights, device=self.device)
         self.weights.requires_grad = False
         print("Contour is evolving please wait a few moment...")
-        for i in range(self.n_epochs):
+        for i in tqdm(range(self.n_epochs)):
 
             features = self.ctf(contour)
-            batch_loss = (
-                self.multiscale_loss(features, self.weights)
-                + self.lambda_area * area(contour)[:, 0]
+            batch_loss = self.multiscale_loss(features, self.weights)
+            loss = img.shape[0] * torch.mean(
+                batch_loss + self.lambda_area * area(contour)[:, 0]
             )
-            loss = img.shape[0] * torch.mean(batch_loss)
             loss.backward(inputs=contour)
             loss_history[:, i] = batch_loss.cpu().detach().numpy()
 
@@ -250,7 +249,7 @@ class DCF:
                     np.array([len(loss), np.inf, np.inf, np.inf]),
                 ),
             )
-            index_stop = np.max(p[0].astype(int) - 1, 0)
+            index_stop = np.max(p[0].astype(int), 0)
             final_contours[i] = contour_history[index_stop, i]
         print("Contour stopped")
 

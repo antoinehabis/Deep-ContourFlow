@@ -33,13 +33,13 @@ $pip install torch_contour>=1.3.0
 
 ## Unsupervised Deep ContourFLow:
 
-To use Unsupervised DCF just add your image in ```images_test_unsupervised_dcf``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
+To use Unsupervised DCF just add your image in ```images_test``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
 
 
 ## One shot learning: Application on Dilated Tubules
 
-To replicate the results in the paper ... follow the steps:
-
+To use the one shot version of the algorithm please provide a support image  with a support mask and a query image in ```images_test``` and run the algorithm using ```one_shot_dcf.ipynb```.
+<!-- 
 ### 0. Download AIDPATH kidney dataset:
 
 1. Register to AIDPATHDB using the link https://mitel.dimi.uniud.it/aidpath-db/app/login.php
@@ -72,7 +72,7 @@ python compute_scores.py
 ```
 
 This code take 10 random dilated tubule in each slide and fit the One shot learning DCF and predict for all other object in the slide.
-It creates a csv file containing all the scores.
+It creates a csv file containing all the scores. -->
 
 
 
