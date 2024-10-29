@@ -8,7 +8,10 @@ from torchvision import transforms
 import torch
 from torch_contour import CleanContours, Smoothing, area
 from scipy import optimize
+from torch.optim import Adam
 from tqdm import tqdm
+from torch.optim.lr_scheduler import ExponentialLR
+from torch.nn.utils import clip_grad_norm_
 
 preprocess = transforms.Compose(
     [
@@ -192,6 +195,12 @@ class DCF:
         _ = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
         contour.requires_grad = True
+        self.optimizer = Adam(
+            [contour],
+            lr=self.learning_rate,
+        )
+        self.my_lr_scheduler = ExponentialLR(optimizer=self.optimizer, gamma=self.ed)
+
         self.ctf = Contour_to_features(img.shape[-1] // (2**2), self.activations)
 
         self.weights = [1 / (2**i) for i in range(len(self.activations))]
@@ -201,35 +210,36 @@ class DCF:
         print("Contour is evolving please wait a few moment...")
         for i in tqdm(range(self.n_epochs)):
 
-            features = self.ctf(contour)
-            batch_loss = self.multiscale_loss(features, self.weights)
-            loss = img.shape[0] * torch.mean(
-                batch_loss + self.lambda_area * area(contour)[:, 0]
+            self.optimizer.zero_grad()
+            features = self.Ctf(contour)
+            contour_input = torch.clone(contour)
+            batch_loss = (
+                self.multiscale_loss(features, self.weights)
+                + self.lambda_area * area(contour)[:, 0]
             )
+            loss = img.shape[0] * torch.mean(batch_loss)
             loss.backward(inputs=contour)
-            loss_history[:, i] = batch_loss.cpu().detach().numpy()
-
-            norm_grad = torch.linalg.vector_norm(contour.grad, dim=-1, keepdim=True)
-            contour_history.append(contour.cpu().detach().numpy())
+            clip_grad_norm_(contour, self.clip)
+            self.optimizer.step()
+            self.my_lr_scheduler.step()
+            contour = (
+                self.smooth((contour - contour_input).to(torch.float32)) + contour_input
+            )
             with torch.no_grad():
-                clipped_norm = torch.clamp(norm_grad, 0.0, self.clip)
-                gradient_direction = contour.grad * clipped_norm / (norm_grad + 1e-8)
-                gradient_direction = self.smooth(gradient_direction.to(torch.float32))
 
-                contour = (
-                    contour
-                    - scale * self.learning_rate * (self.ed**i) * gradient_direction
-                )
+                loss_history[:, i] = batch_loss.cpu().detach().numpy()
+                contour = contour.cpu().detach().numpy()
+                contour_history.append(contour)
 
                 contour_without_loops = self.cleaner.clean_contours_and_interpolate(
-                    contour.cpu().detach().numpy()
+                    contour
                 )
-
                 contour = torch.clip(torch.from_numpy(contour_without_loops), 0, 1)
                 if str(self.device) == "cuda:0":
                     contour = contour.cuda()
                 contour.grad = None
                 contour.requires_grad = True
+                self.optimizer.param_groups[0]["params"][0] = contour
 
         contour_history = np.roll(np.stack(contour_history), axis=-1, shift=-1)[:, :, 0]
         contour_history = (
