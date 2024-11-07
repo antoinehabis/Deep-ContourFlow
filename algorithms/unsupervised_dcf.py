@@ -211,7 +211,7 @@ class DCF:
         for i in tqdm(range(self.n_epochs)):
 
             self.optimizer.zero_grad()
-            features = self.Ctf(contour)
+            features = self.ctf(contour)
             contour_input = torch.clone(contour)
             batch_loss = (
                 self.multiscale_loss(features, self.weights)
@@ -259,7 +259,7 @@ class DCF:
                     np.array([len(loss), np.inf, np.inf, np.inf]),
                 ),
             )
-            index_stop = np.max(p[0].astype(int), 0)
+            index_stop = np.max(p[0].astype(int)-10, 0)
             final_contours[i] = contour_history[index_stop, i]
         print("Contour stopped")
 
