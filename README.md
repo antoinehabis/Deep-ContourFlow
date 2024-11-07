@@ -7,7 +7,15 @@
 [![ArXiv Paper](https://img.shields.io/badge/DOI-10.1038%2Fs41586--020--2649--2-blue)](
 https://doi.org/10.48550/arXiv.2407.10696)
 
-In This repository you can find the code for both: unsupervised Deep-ContourFlow and One shot learning Deep-ContourFlow.
+To use this repository please first install torch-contour:
+```
+$pip install torch_contour>=1.3.0
+```
+
+In this repository you can find the code for both:
+
+- Unsupervised Deep-ContourFlow
+- One shot learning Deep-ContourFlow.
 
 if you use the the code please cite the following paper:
 ```
@@ -23,13 +31,8 @@ if you use the the code please cite the following paper:
 ```
 
 ![Alt text](./folder_images_paper/real_life_images.png "Unsupervised DCF: evolution of the contour on four real-life images when varying the initial contour")
-![Alt text](./folder_images_paper/skin_lesions.png "Unsupervised DCF: evolution of the contour on three skin lesions from Skin Cancer MNIST: HAM10000")
-![Alt text](./folder_images_paper/tumor_region.png "Unsupervised DCF: evolution of the contour on two histology images.")
 
-To use this repository please first install torch-contour:
-```
-$pip install torch_contour>=1.3.0
-```
+![Alt text](./folder_images_paper/tumor_region.png "Unsupervised DCF: evolution of the contour on two histology images.")
 
 ## Unsupervised Deep ContourFLow:
 
