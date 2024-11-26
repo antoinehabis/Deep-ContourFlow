@@ -190,13 +190,11 @@ class DCF:
             torch.tensor([512.0, 512.0], device=self.device, dtype=torch.float32)
             / self.img_dim
         )
-        print(self.device)
         if str(self.device) == "cuda:0":
             self.model = self.model.cuda()
         if str(self.device) == "mps:0":
             self.model = self.model.to(torch.device("mps"))
-        print(next(self.model.parameters()).device
-)
+
         _  = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
         contour.requires_grad = True
