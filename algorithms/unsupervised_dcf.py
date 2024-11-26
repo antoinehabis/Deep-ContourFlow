@@ -19,7 +19,7 @@ preprocess = transforms.Compose(
     ]
 )
 vgg16 = models.vgg16(weights="DEFAULT")
-VGG16 = vgg16.features
+VGG16 = vgg16.features.to(torch.float32)
 
 
 class DCF:
@@ -190,9 +190,14 @@ class DCF:
             torch.tensor([512.0, 512.0], device=self.device, dtype=torch.float32)
             / self.img_dim
         )
+        print(self.device)
         if str(self.device) == "cuda:0":
             self.model = self.model.cuda()
-        _ = self.model(preprocess(img))
+        if str(self.device) == "mps:0":
+            self.model = self.model.to(torch.device("mps"))
+        print(next(self.model.parameters()).device
+)
+        _  = self.model(preprocess(img))
         contour = torch.roll(contour_init, dims=-1, shifts=1)
         contour.requires_grad = True
         self.optimizer = Adam(
@@ -205,7 +210,7 @@ class DCF:
 
         self.weights = [1 / (2**i) for i in range(len(self.activations))]
         self.weights = self.weights / np.sum(self.weights)
-        self.weights = torch.tensor(self.weights, device=self.device)
+        self.weights = torch.tensor(self.weights, device=self.device, dtype=torch.float32)
         self.weights.requires_grad = False
         print("Contour is evolving please wait a few moment...")
         for i in tqdm(range(self.n_epochs)):
@@ -236,7 +241,9 @@ class DCF:
                 )
                 contour = torch.clip(torch.from_numpy(contour_without_loops), 0, 1)
                 if str(self.device) == "cuda:0":
-                    contour = contour.cuda()
+                    contour = contour.to(torch.float32).cuda()
+                if str(self.device) == "mps:0":
+                    contour = contour.to(torch.float32).to(torch.device("mps"))
                 contour.grad = None
                 contour.requires_grad = True
                 self.optimizer.param_groups[0]["params"][0] = contour
