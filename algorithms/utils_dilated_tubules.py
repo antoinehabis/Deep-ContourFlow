@@ -1,15 +1,16 @@
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from config import *
-from skimage.measure import label
-from scipy.interpolate import interp1d
-import numpy as np
-import cv2
-from scipy.ndimage import binary_closing
-from skimage.morphology import disk
-# from histolab.slide import Slide
 
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+import cv2
+import numpy as np
+from scipy.ndimage import binary_closing
+from skimage.measure import label
+from skimage.morphology import disk
+
+from config import *
+
+# from histolab.slide import Slide
 
 
 def row_to_filename(row):
@@ -27,6 +28,7 @@ def find_thresh(filename, percentile):
     new_img = binary_closing(1 - th2 / 255, disk(9)).astype(bool)
     return np.percentile(gray[new_img], percentile) / 255
 
+
 def row_to_coordinates(row):
     class_ = row.term
     string = row.location
@@ -36,13 +38,16 @@ def row_to_coordinates(row):
     coordinates = np.array(eval(string))
     return coordinates, class_
 
-def preprocess_contour(contour_init,
-                       img):
-    img = cv2.fillPoly(np.zeros(img.shape[:-1]), [contour_init.astype(int)], 1)
-    img = binary_closing(img,disk(5))      
-    contour_init = np.squeeze(cv2.findContours(img.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0])
-    return contour_init
 
+def preprocess_contour(contour_init, img):
+    img = cv2.fillPoly(np.zeros(img.shape[:-1]), [contour_init.astype(int)], 1)
+    img = binary_closing(img, disk(5))
+    contour_init = np.squeeze(
+        cv2.findContours(img.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[
+            0
+        ][0]
+    )
+    return contour_init
 
 
 def process_coord_get_image(coord, im, margin=100):
