@@ -4,12 +4,12 @@
 [![Mail](https://img.shields.io/badge/Gmail-D14836?style=for-the-badge&logo=gmail&logoColor=white)](mailto:antoine.habis.tlcm@gmail.com)
 [![Downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
 [![Downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
-[![ArXiv Paper](https://img.shields.io/badge/DOI-10.1038%2Fs41586--020--2649--2-blue)](
-https://doi.org/10.48550/arXiv.2407.10696)
+[![ArXiv Paper](https://img.shields.io/badge/DOI-10.1038%2Fs41586--020--2649--2-blue)](https://doi.org/10.48550/arXiv.2407.10696)
 
 To use this repository please first install torch-contour:
+
 ```
-$pip install torch_contour>=1.3.0
+$pip install -r requirements.txt
 ```
 
 In this repository you can find the code for both:
@@ -17,18 +17,7 @@ In this repository you can find the code for both:
 - Unsupervised Deep-ContourFlow
 - One shot learning Deep-ContourFlow.
 
-if you use the the code please cite the following paper:
-```
-@misc{habis2024deepcontourflowadvancingactive,
-      title={Deep ContourFlow: Advancing Active Contours with Deep Learning}, 
-      author={Antoine Habis and Vannary Meas-Yedid and Elsa Angelini and Jean-Christophe Olivo-Marin},
-      year={2024},
-      eprint={2407.10696},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2407.10696}, 
-}
-```
+
 
 ![Alt text](./folder_images_paper/real_life_images.png "Unsupervised DCF: evolution of the contour on four real-life images when varying the initial contour")
 
@@ -36,13 +25,27 @@ if you use the the code please cite the following paper:
 
 ## Unsupervised Deep ContourFLow:
 
-To use Unsupervised DCF just add your image in ```images_test``` and run the algorithm using the notebook: ```unsupervised_dcf.ipynb```
+To use Unsupervised DCF just add your image in `images_test` and run the algorithm using the notebook: `unsupervised_dcf.ipynb`
 
+## One shot learning:
 
-## One shot learning: Application on Dilated Tubules
+To use the one shot version of the algorithm please provide a support image with a support mask and a query image in `images_test` and run the algorithm using `one_shot_dcf.ipynb`.
 
-To use the one shot version of the algorithm please provide a support image  with a support mask and a query image in ```images_test``` and run the algorithm using ```one_shot_dcf.ipynb```.
-<!-- 
+if you use the the code please cite the following paper:
+
+```
+@misc{habis2024deepcontourflowadvancingactive,
+      title={Deep ContourFlow: Advancing Active Contours with Deep Learning},
+      author={Antoine Habis and Vannary Meas-Yedid and Elsa Angelini and Jean-Christophe Olivo-Marin},
+      year={2024},
+      eprint={2407.10696},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2407.10696},
+}
+```
+
+<!--
 ### 0. Download AIDPATH kidney dataset:
 
 1. Register to AIDPATHDB using the link https://mitel.dimi.uniud.it/aidpath-db/app/login.php
@@ -51,7 +54,7 @@ Donwload the kidney dataset of AIDPATHDB and put the images in a subfolder calle
 
 
 Manual annotations are available in the github in the ```generate_annotations``` folder.
-   
+
 ### 1. Extract images:
 
  ```
@@ -76,10 +79,3 @@ python compute_scores.py
 
 This code take 10 random dilated tubule in each slide and fit the One shot learning DCF and predict for all other object in the slide.
 It creates a csv file containing all the scores. -->
-
-
-
-   
-
-
-
