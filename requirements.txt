@@ -1,0 +1,10 @@
+numpy
+torch
+torchstain
+torch-contour
+scipy
+numba
+torchvision
+tqdm
+opencv-python
+matplotlib 
