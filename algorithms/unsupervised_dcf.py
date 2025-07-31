@@ -3,6 +3,9 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
+import cv2
+from scipy.ndimage import distance_transform_edt, label
+
 from utils import Contour_to_features, piecewise_linear
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -54,6 +57,7 @@ class DCF:
         early_stopping_patience: int = 10,
         early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = False,
+        do_apply_grabcut: bool = False,
     ):
         """
         Initialize the DCF algorithm with the specified parameters.
@@ -96,6 +100,7 @@ class DCF:
         self.early_stopping_patience = early_stopping_patience
         self.early_stopping_threshold = early_stopping_threshold
         self.use_mixed_precision = use_mixed_precision
+        self.do_apply_grabcut = do_apply_grabcut
 
         self._initialize_components(sigma)
 
@@ -263,6 +268,11 @@ class DCF:
             )
 
             final_contours = self._compute_final_contours(contour_history, loss_history)
+
+            # Apply GrabCut if requested
+            if self.do_apply_grabcut:
+                logger.info("Applying GrabCut post-processing...")
+                final_contours = self._apply_grabcut_postprocessing(img, final_contours)
 
             logger.info("Prediction completed successfully")
             return (
@@ -554,3 +564,97 @@ class DCF:
         except Exception as e:
             logger.error(f"Error computing final contours: {e}")
             raise
+
+    def _apply_grabcut_postprocessing(
+        self, img: torch.Tensor, final_contours: np.ndarray
+    ) -> np.ndarray:
+        """
+        Apply GrabCut post-processing to refine the final contours.
+
+        Args:
+            img: Input image tensor (B, C, H, W)
+            final_contours: Final contours from DCF (B, K, 2)
+
+        Returns:
+            Refined contours after GrabCut processing
+        """
+        try:
+            refined_contours = []
+
+            for i in range(img.shape[0]):
+                # Convert tensor to numpy
+                img_np = img[i].cpu().numpy()
+                img_np = np.moveaxis(img_np, 0, -1)  # (C, H, W) -> (H, W, C)
+                img_np = (img_np * 255).astype(np.uint8)
+
+                # Get contour for this batch
+                contour = final_contours[i]
+
+                # Create mask from contour
+                mask = np.zeros((img_np.shape[0], img_np.shape[1]), dtype=np.uint8)
+
+                # Fix contour format for cv2.fillPoly
+                if len(contour.shape) == 2:
+                    contour_for_fill = contour.reshape(-1, 1, 2).astype(int)
+                else:
+                    contour_for_fill = contour.astype(int)
+
+                cv2.fillPoly(mask, [contour_for_fill], 1)
+
+                # Apply GrabCut
+                distance_map = distance_transform_edt(mask)
+                distance_map = distance_map / np.max(distance_map)
+                distance_map_outside = distance_transform_edt(1 - mask)
+                distance_map_outside = distance_map_outside / np.max(
+                    distance_map_outside
+                )
+
+                mask_grabcut = np.full(mask.shape, cv2.GC_PR_BGD, dtype=np.uint8)
+                mask_grabcut[distance_map > 0.8] = cv2.GC_FGD
+                mask_grabcut[(distance_map > 0.5) & (distance_map <= 0.8)] = (
+                    cv2.GC_PR_FGD
+                )
+                mask_grabcut[distance_map_outside > 0.8] = cv2.GC_BGD
+
+                bgdModel = np.zeros((1, 65), np.float64)
+                fgdModel = np.zeros((1, 65), np.float64)
+
+                cv2.grabCut(
+                    img_np,
+                    mask_grabcut,
+                    None,
+                    bgdModel,
+                    fgdModel,
+                    5,
+                    cv2.GC_INIT_WITH_MASK,
+                )
+
+                result = np.where(
+                    (mask_grabcut == cv2.GC_FGD) | (mask_grabcut == cv2.GC_PR_FGD), 1, 0
+                ).astype(np.uint8)
+
+                # Get largest connected component
+                labeled_array, num_features = label(result)
+                if num_features > 0:
+                    largest_cc = np.argmax(np.bincount(labeled_array.flat)[1:]) + 1
+                    result = (labeled_array == largest_cc).astype(np.uint8)
+
+                # Find contours from refined mask
+                contours, _ = cv2.findContours(
+                    result, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                )
+
+                if contours:
+                    # Get the largest contour
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    refined_contours.append(largest_contour.reshape(-1, 2))
+                else:
+                    # Fallback to original contour
+                    refined_contours.append(contour)
+
+            logger.info("GrabCut post-processing completed")
+            return np.array(refined_contours)
+
+        except Exception as e:
+            logger.error(f"Error in GrabCut post-processing: {e}")
+            return final_contours  # Return original contours if GrabCut fails
