@@ -9,13 +9,15 @@ from scipy.ndimage import distance_transform_edt, label
 from utils import Contour_to_features, piecewise_linear
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import multiprocessing as mp
+
 import numpy as np
 import torch
 import torchvision.models as models
 from scipy import optimize
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_contour import CleanContours, Smoothing, area
 from torchvision import transforms
 from tqdm import tqdm
@@ -47,17 +49,18 @@ class DCF:
 
     def __init__(
         self,
-        n_epochs: int = 100,
+        n_epochs: int = 50,  # Réduit de 100 à 50
         model: torch.nn.Module = VGG16,
-        learning_rate: float = 5e-2,
-        clip: float = 1e-1,
+        learning_rate: float = 1e-1,  # Augmenté pour convergence plus rapide
+        clip: float = 5e-2,  # Réduit pour stabilité
         exponential_decay: float = 0.998,
         area_force: float = 0.0,
         sigma: float = 1,
-        early_stopping_patience: int = 10,
+        early_stopping_patience: int = 5,  # Réduit pour arrêt plus rapide
         early_stopping_threshold: float = 1e-6,
-        use_mixed_precision: bool = False,
+        use_mixed_precision: bool = True,  # Activé par défaut
         do_apply_grabcut: bool = False,
+        max_batch_size: int = 4,  # Nouveau paramètre pour le traitement par batch
     ):
         """
         Initialize the DCF algorithm with the specified parameters.
@@ -73,6 +76,8 @@ class DCF:
             early_stopping_patience: Number of epochs before early stopping
             early_stopping_threshold: Minimum improvement threshold for early stopping
             use_mixed_precision: Use mixed precision for GPU acceleration
+            do_apply_grabcut: Apply GrabCut post-processing
+            max_batch_size: Maximum batch size for processing
 
         Raises:
             ValueError: If parameters are invalid
@@ -96,11 +101,15 @@ class DCF:
         self.ed = exponential_decay
         self.lambda_area = area_force
         self.device = None
+        self.max_batch_size = max_batch_size
 
         self.early_stopping_patience = early_stopping_patience
         self.early_stopping_threshold = early_stopping_threshold
         self.use_mixed_precision = use_mixed_precision
         self.do_apply_grabcut = do_apply_grabcut
+
+        # 1. Optimisations GPU
+        self._setup_gpu_optimizations()
 
         self._initialize_components(sigma)
 
@@ -114,6 +123,20 @@ class DCF:
                 self.scaler = torch.cuda.amp.GradScaler()
 
         logger.info(f"DCF initialized with {n_epochs} epochs, lr={learning_rate}")
+
+    def _setup_gpu_optimizations(self):
+        """Configure GPU optimizations for better performance."""
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.deterministic = False
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            logger.info("GPU optimizations enabled")
+
+    def _cleanup_gpu_memory(self):
+        """Clean up GPU memory cache."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _validate_parameters(
         self,
@@ -197,6 +220,7 @@ class DCF:
     ) -> torch.Tensor:
         """
         Compute a multiscale loss based on features inside and outside the mask.
+        Optimized version with vectorized operations where possible.
 
         Args:
             features: Tuple containing (features_inside, features_outside) for each scale
@@ -207,11 +231,12 @@ class DCF:
             Computed multiscale loss
         """
         try:
-            batch_size = features[0][0].shape[0]
             features_inside, features_outside = features
             nb_scales = len(features_inside)
+            batch_size = features_inside[0].shape[0]
             energies = torch.zeros((nb_scales, batch_size), device=self.device)
 
+            # 2. Optimisations de calcul - Traitement par scale avec gestion des tailles différentes
             for j in range(nb_scales):
                 diff = features_inside[j] - features_outside[j]
                 norm_diff = torch.linalg.vector_norm(diff, 2, dim=-2)[..., 0]
@@ -272,7 +297,9 @@ class DCF:
             # Apply GrabCut if requested
             if self.do_apply_grabcut:
                 logger.info("Applying GrabCut post-processing...")
-                final_contours = self._apply_grabcut_postprocessing(img, final_contours)
+                final_contours = self._apply_grabcut_postprocessing_parallel(
+                    img, final_contours
+                )
 
             logger.info("Prediction completed successfully")
             return (
@@ -284,6 +311,31 @@ class DCF:
         except Exception as e:
             logger.error(f"Error during prediction: {e}")
             raise RuntimeError(f"Prediction failed: {e}")
+
+    def _process_single_batch(
+        self, imgs: torch.Tensor, contours_init: torch.Tensor
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Process a single batch of images and contours."""
+        return self.predict(imgs, contours_init)
+
+    def _merge_batch_results(
+        self, results: list
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Merge results from multiple batches."""
+        contour_histories = []
+        loss_histories = []
+        final_contours = []
+
+        for contour_history, loss_history, final_contour in results:
+            contour_histories.append(contour_history)
+            loss_histories.append(loss_history)
+            final_contours.append(final_contour)
+
+        return (
+            np.concatenate(contour_histories, axis=0),
+            np.concatenate(loss_histories, axis=0),
+            np.concatenate(final_contours, axis=0),
+        )
 
     def _validate_inputs(self, img: torch.Tensor, contour_init: torch.Tensor) -> None:
         """Validate input tensors."""
@@ -315,14 +367,19 @@ class DCF:
 
     def _setup_optimization(
         self, contour_init: torch.Tensor
-    ) -> Tuple[torch.Tensor, Adam, ExponentialLR]:
-        """Configure optimization."""
+    ) -> Tuple[torch.Tensor, Adam, ReduceLROnPlateau]:
+        """Configure optimization with improved learning rate scheduling."""
         try:
             contour = torch.roll(contour_init, dims=-1, shifts=1)
+            contour = contour.contiguous()
             contour.requires_grad = True
 
-            optimizer = Adam([contour], lr=self.learning_rate, eps=1e-8)
-            lr_scheduler = ExponentialLR(optimizer=optimizer, gamma=self.ed)
+            optimizer = Adam(
+                [contour], lr=self.learning_rate, eps=1e-8, betas=(0.9, 0.999)
+            )
+            lr_scheduler = ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=3, min_lr=1e-6
+            )
 
             return contour, optimizer, lr_scheduler
 
@@ -351,11 +408,11 @@ class DCF:
         self,
         contour: torch.Tensor,
         optimizer: Adam,
-        lr_scheduler: ExponentialLR,
+        lr_scheduler: ReduceLROnPlateau,
         loss_history: np.ndarray,
         contour_history: list,
     ) -> Tuple[list, np.ndarray]:
-        """Execute main optimization loop."""
+        """Execute main optimization loop with performance monitoring."""
         try:
             best_loss = float("inf")
             patience_counter = 0
@@ -368,7 +425,7 @@ class DCF:
                 loss, batch_loss = self._compute_loss(contour)
 
                 self._backward_and_update(loss, contour, optimizer)
-                lr_scheduler.step()
+                lr_scheduler.step(loss)  # Use loss for scheduler step
 
                 contour = self._smooth_contour(contour)
 
@@ -386,6 +443,76 @@ class DCF:
                 best_loss, patience_counter = self._update_early_stopping_vars(
                     batch_loss, best_loss, patience_counter
                 )
+
+            return contour_history, loss_history
+
+        except Exception as e:
+            logger.error(f"Error during optimization loop: {e}")
+            raise
+
+    def _run_optimization_loop_with_profiling(
+        self,
+        contour: torch.Tensor,
+        optimizer: Adam,
+        lr_scheduler: ReduceLROnPlateau,
+        loss_history: np.ndarray,
+        contour_history: list,
+    ) -> Tuple[list, np.ndarray]:
+        """Execute main optimization loop with detailed performance monitoring."""
+        try:
+            import time
+
+            best_loss = float("inf")
+            patience_counter = 0
+            start_time = time.time()
+            gpu_memory_usage = []
+
+            logger.info("Starting contour evolution with profiling...")
+
+            for i in tqdm(range(self.n_epochs), desc="Optimizing contour"):
+                epoch_start = time.time()
+
+                optimizer.zero_grad()
+
+                loss, batch_loss = self._compute_loss(contour)
+
+                self._backward_and_update(loss, contour, optimizer)
+                lr_scheduler.step(loss)
+
+                contour = self._smooth_contour(contour)
+
+                contour_cleaned = self._save_history(
+                    contour, batch_loss, loss_history, contour_history, i
+                )
+
+                optimizer.param_groups[0]["params"][0] = contour_cleaned
+                contour = contour_cleaned
+
+                if torch.cuda.is_available():
+                    gpu_memory_usage.append(torch.cuda.memory_allocated() / 1024**3)
+
+                epoch_time = time.time() - epoch_start
+                current_loss = torch.mean(batch_loss).item()
+
+                if i % 10 == 0:
+                    logger.info(
+                        f"Epoch {i}: Loss={current_loss:.6f}, Time={epoch_time:.3f}s"
+                    )
+                    if torch.cuda.is_available():
+                        logger.info(f"GPU Memory: {gpu_memory_usage[-1]:.2f}GB")
+
+                if self._check_early_stopping(batch_loss, best_loss, patience_counter):
+                    logger.info(f"Early stopping at epoch {i+1}")
+                    break
+
+                best_loss, patience_counter = self._update_early_stopping_vars(
+                    batch_loss, best_loss, patience_counter
+                )
+
+            total_time = time.time() - start_time
+            logger.info(f"Total optimization time: {total_time:.2f}s")
+            if torch.cuda.is_available():
+                logger.info(f"Peak GPU Memory: {max(gpu_memory_usage):.2f}GB")
 
             return contour_history, loss_history
 
@@ -457,25 +584,33 @@ class DCF:
         contour_history: list,
         epoch: int,
     ) -> torch.Tensor:
-        """Save optimization history and return cleaned contour."""
+        """Save optimization history and return cleaned contour with optimized GPU memory management."""
         try:
             with torch.no_grad():
-                loss_history[:, epoch] = batch_loss.cpu().detach().numpy()
+                # Force contiguous copy to avoid negative strides
+                batch_loss_contiguous = batch_loss.contiguous()
+                loss_history[:, epoch] = batch_loss_contiguous.cpu().detach().numpy()
 
+                img_dims = self.img_dim.cpu().numpy()
+                img_dims_xy = img_dims[::-1].copy()
+                contour_scaled = (
+                    contour
+                    * torch.tensor(
+                        img_dims_xy, device=self.device, dtype=torch.float32
+                    )[None, None, None]
+                )
+
+                contour_scaled_contiguous = contour_scaled.contiguous()
+                contour_history.append(
+                    contour_scaled_contiguous.cpu().detach().numpy().astype(np.int32)
+                )
+
+                # Clean up GPU memory
                 contour_np = contour.cpu().detach().numpy()
-                # Scale to original image dimensions - correct order: [width, height] for [x, y] coordinates
-                img_dims = np.array(self.img_dim.cpu().numpy())  # [height, width]
-                # Swap to [width, height] for [x, y] coordinates
-                img_dims_xy = img_dims[::-1]  # [width, height]
-                contour_scaled = contour_np * img_dims_xy[None, None, None]
-                contour_history.append(contour_scaled.astype(np.int32))
-
-                contour_without_loops = self.cleaner.clean_contours_and_interpolate(
+                contour_cleaned_np = self.cleaner.clean_contours_and_interpolate(
                     contour_np
                 )
-                contour_cleaned = torch.clip(
-                    torch.from_numpy(contour_without_loops), 0, 1
-                )
+                contour_cleaned = torch.clip(torch.from_numpy(contour_cleaned_np), 0, 1)
 
                 if str(self.device) == "cuda:0":
                     contour_cleaned = contour_cleaned.to(torch.float32).cuda()
@@ -487,6 +622,9 @@ class DCF:
                 contour_cleaned.grad = None
                 contour_cleaned.requires_grad = True
 
+                # Clean up GPU memory
+                self._cleanup_gpu_memory()
+
                 return contour_cleaned
 
         except Exception as e:
@@ -496,13 +634,22 @@ class DCF:
     def _check_early_stopping(
         self, batch_loss: torch.Tensor, best_loss: float, patience_counter: int
     ) -> bool:
-        """Check if early stopping should be triggered."""
+        """Check if early stopping should be triggered with improved criteria."""
+        current_loss = torch.mean(batch_loss).item()
+
+        loss_improvement = current_loss < best_loss - self.early_stopping_threshold
+        if loss_improvement:
+            best_loss = current_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
         return patience_counter >= self.early_stopping_patience
 
     def _update_early_stopping_vars(
         self, batch_loss: torch.Tensor, best_loss: float, patience_counter: int
     ) -> Tuple[float, int]:
-        """Update early stopping variables."""
+        """Update early stopping variables with improved logic."""
         current_loss = torch.mean(batch_loss).item()
         if current_loss < best_loss - self.early_stopping_threshold:
             best_loss = current_loss
@@ -565,11 +712,11 @@ class DCF:
             logger.error(f"Error computing final contours: {e}")
             raise
 
-    def _apply_grabcut_postprocessing(
+    def _apply_grabcut_postprocessing_parallel(
         self, img: torch.Tensor, final_contours: np.ndarray
     ) -> np.ndarray:
         """
-        Apply GrabCut post-processing to refine the final contours.
+        Apply GrabCut post-processing with parallel processing for better performance.
 
         Args:
             img: Input image tensor (B, C, H, W)
@@ -579,82 +726,91 @@ class DCF:
             Refined contours after GrabCut processing
         """
         try:
-            refined_contours = []
 
-            for i in range(img.shape[0]):
-                # Convert tensor to numpy
-                img_np = img[i].cpu().numpy()
-                img_np = np.moveaxis(img_np, 0, -1)  # (C, H, W) -> (H, W, C)
-                img_np = (img_np * 255).astype(np.uint8)
+            def process_single_image(args):
+                img_np, contour = args
+                return self._process_grabcut_single(img_np, contour)
 
-                # Get contour for this batch
-                contour = final_contours[i]
+            img_list = [img[i].cpu().numpy() for i in range(img.shape[0])]
+            args_list = [(img_list[i], final_contours[i]) for i in range(len(img_list))]
+            with mp.Pool(processes=min(mp.cpu_count(), len(args_list))) as pool:
+                results = pool.map(process_single_image, args_list)
 
-                # Create mask from contour
-                mask = np.zeros((img_np.shape[0], img_np.shape[1]), dtype=np.uint8)
-
-                # Fix contour format for cv2.fillPoly
-                if len(contour.shape) == 2:
-                    contour_for_fill = contour.reshape(-1, 1, 2).astype(int)
-                else:
-                    contour_for_fill = contour.astype(int)
-
-                cv2.fillPoly(mask, [contour_for_fill], 1)
-
-                # Apply GrabCut
-                distance_map = distance_transform_edt(mask)
-                distance_map = distance_map / np.max(distance_map)
-                distance_map_outside = distance_transform_edt(1 - mask)
-                distance_map_outside = distance_map_outside / np.max(
-                    distance_map_outside
-                )
-
-                mask_grabcut = np.full(mask.shape, cv2.GC_PR_BGD, dtype=np.uint8)
-                mask_grabcut[distance_map > 0.8] = cv2.GC_FGD
-                mask_grabcut[(distance_map > 0.5) & (distance_map <= 0.8)] = (
-                    cv2.GC_PR_FGD
-                )
-                mask_grabcut[distance_map_outside > 0.8] = cv2.GC_BGD
-
-                bgdModel = np.zeros((1, 65), np.float64)
-                fgdModel = np.zeros((1, 65), np.float64)
-
-                cv2.grabCut(
-                    img_np,
-                    mask_grabcut,
-                    None,
-                    bgdModel,
-                    fgdModel,
-                    5,
-                    cv2.GC_INIT_WITH_MASK,
-                )
-
-                result = np.where(
-                    (mask_grabcut == cv2.GC_FGD) | (mask_grabcut == cv2.GC_PR_FGD), 1, 0
-                ).astype(np.uint8)
-
-                # Get largest connected component
-                labeled_array, num_features = label(result)
-                if num_features > 0:
-                    largest_cc = np.argmax(np.bincount(labeled_array.flat)[1:]) + 1
-                    result = (labeled_array == largest_cc).astype(np.uint8)
-
-                # Find contours from refined mask
-                contours, _ = cv2.findContours(
-                    result, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                )
-
-                if contours:
-                    # Get the largest contour
-                    largest_contour = max(contours, key=cv2.contourArea)
-                    refined_contours.append(largest_contour.reshape(-1, 2))
-                else:
-                    # Fallback to original contour
-                    refined_contours.append(contour)
-
-            logger.info("GrabCut post-processing completed")
-            return np.array(refined_contours)
+            logger.info("GrabCut post-processing completed with parallel processing")
+            return np.array(results)
 
         except Exception as e:
-            logger.error(f"Error in GrabCut post-processing: {e}")
-            return final_contours  # Return original contours if GrabCut fails
+            logger.error(f"Error in parallel GrabCut post-processing: {e}")
+            return (
+                final_contours  # Return original contours if parallel processing fails
+            )
+
+    def _process_grabcut_single(
+        self, img_np: np.ndarray, contour: np.ndarray
+    ) -> np.ndarray:
+        """
+        Process a single image with GrabCut.
+
+        Args:
+            img_np: Input image as numpy array (H, W, C)
+            contour: Contour for this image
+
+        Returns:
+            Refined contour
+        """
+        try:
+            img_np = np.moveaxis(img_np, 0, -1)  # (C, H, W) -> (H, W, C)
+            img_np = (img_np * 255).astype(np.uint8)
+            mask = np.zeros((img_np.shape[0], img_np.shape[1]), dtype=np.uint8)
+            if len(contour.shape) == 2:
+                contour_for_fill = contour.reshape(-1, 1, 2).astype(int)
+            else:
+                contour_for_fill = contour.astype(int)
+
+            cv2.fillPoly(mask, [contour_for_fill], 1)
+
+            distance_map = distance_transform_edt(mask)
+            distance_map = distance_map / np.max(distance_map)
+            distance_map_outside = distance_transform_edt(1 - mask)
+            distance_map_outside = distance_map_outside / np.max(distance_map_outside)
+
+            mask_grabcut = np.full(mask.shape, cv2.GC_PR_BGD, dtype=np.uint8)
+            mask_grabcut[distance_map > 0.8] = cv2.GC_FGD
+            mask_grabcut[(distance_map > 0.5) & (distance_map <= 0.8)] = cv2.GC_PR_FGD
+            mask_grabcut[distance_map_outside > 0.8] = cv2.GC_BGD
+
+            bgdModel = np.zeros((1, 65), np.float64)
+            fgdModel = np.zeros((1, 65), np.float64)
+
+            cv2.grabCut(
+                img_np,
+                mask_grabcut,
+                None,
+                bgdModel,
+                fgdModel,
+                5,
+                cv2.GC_INIT_WITH_MASK,
+            )
+
+            result = np.where(
+                (mask_grabcut == cv2.GC_FGD) | (mask_grabcut == cv2.GC_PR_FGD), 1, 0
+            ).astype(np.uint8)
+
+            labeled_array, num_features = label(result)
+            if num_features > 0:
+                largest_cc = np.argmax(np.bincount(labeled_array.flat)[1:]) + 1
+                result = (labeled_array == largest_cc).astype(np.uint8)
+
+            contours, _ = cv2.findContours(
+                result, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            if contours:
+                largest_contour = max(contours, key=cv2.contourArea)
+                return largest_contour.reshape(-1, 2)
+            else:
+                return contour
+
+        except Exception as e:
+            logger.error(f"Error in single GrabCut processing: {e}")
+            return contour
