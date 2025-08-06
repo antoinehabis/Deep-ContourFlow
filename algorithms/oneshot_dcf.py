@@ -4,6 +4,9 @@ import warnings
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import cv2
+from scipy.ndimage import distance_transform_edt, label
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import numpy as np
 import torch
@@ -19,13 +22,6 @@ from utils import (
     Mask_to_features,
     augmentation,
 )
-
-# from .utils_dilated_tubules import (
-#     Contour_to_distance_map,
-#     CleanContours,
-#     Smoothing,
-#     area,
-# )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -64,6 +60,7 @@ class DCF:
         early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = False,
         device: Optional[str] = None,
+        do_apply_grabcut: bool = False,
     ):
         """
         This class implements the one shot version of DCF. It contains a fit and a predict step.
@@ -158,6 +155,7 @@ class DCF:
         self.early_stopping_patience = early_stopping_patience
         self.early_stopping_threshold = early_stopping_threshold
         self.use_mixed_precision = use_mixed_precision
+        self.do_apply_grabcut = do_apply_grabcut
 
         # Device setup
         if device is None:
@@ -677,6 +675,13 @@ class DCF:
             best_contours_scaled = best_contours * img_dims_xy[None, None, None]
             best_contours_final = best_contours_scaled.astype(np.int32)
 
+            # Apply GrabCut if requested
+            if self.do_apply_grabcut:
+                logger.info("Applying GrabCut post-processing...")
+                best_contours_final = self._apply_grabcut_postprocessing(
+                    imgs_query, best_contours_final
+                )
+
             logger.info("Prediction completed successfully")
             return best_contours_final, scores, losses, loss_scales_isos
 
@@ -704,3 +709,112 @@ class DCF:
                 self.model = self.model.to(self.device)
         except Exception as e:
             logger.warning(f"Could not move model to device {self.device}: {e}")
+
+    def _apply_grabcut_postprocessing(
+        self, img: torch.Tensor, final_contours: np.ndarray
+    ) -> np.ndarray:
+        """
+        Apply GrabCut post-processing to refine the final contours.
+
+        Args:
+            img: Input image tensor (B, C, H, W)
+            final_contours: Final contours from DCF (B, K, 2) - already in image coordinates
+
+        Returns:
+            Refined contours after GrabCut processing
+        """
+        try:
+            refined_contours = []
+
+            for i in range(img.shape[0]):
+                # Convert tensor to numpy
+                img_np = img[i].cpu().numpy()
+                img_np = np.moveaxis(img_np, 0, -1)  # (C, H, W) -> (H, W, C)
+                img_np = (img_np * 255).astype(np.uint8)
+
+                # Get contour for this batch
+                contour = final_contours[i]
+
+                # In oneshot_dcf, contours are already in image coordinates
+                # Just ensure they are within bounds
+                h, w = img_np.shape[:2]
+                contour = np.clip(contour, 0, [w - 1, h - 1]).astype(np.int32)
+
+                # Create mask from contour
+                mask = np.zeros((h, w), dtype=np.uint8)
+
+                # Fix contour format for cv2.fillPoly
+                if len(contour.shape) == 2:
+                    contour_for_fill = contour.reshape(-1, 1, 2)
+                else:
+                    contour_for_fill = contour
+
+                cv2.fillPoly(mask, [contour_for_fill], 1)
+
+                # Debug: check if mask is valid
+                logger.info(
+                    f"Sample {i}: contour shape={contour.shape}, range=[{contour.min()}, {contour.max()}], mask_sum={np.sum(mask)}"
+                )
+
+                if np.sum(mask) == 0:
+                    logger.warning(f"Empty mask for sample {i}, skipping GrabCut")
+                    refined_contours.append(contour)
+                    continue
+
+                # Apply GrabCut
+                distance_map = distance_transform_edt(mask)
+                distance_map = distance_map / np.max(distance_map)
+                distance_map_outside = distance_transform_edt(1 - mask)
+                distance_map_outside = distance_map_outside / np.max(
+                    distance_map_outside
+                )
+
+                mask_grabcut = np.full(mask.shape, cv2.GC_PR_BGD, dtype=np.uint8)
+                mask_grabcut[distance_map > 0.8] = cv2.GC_FGD
+                mask_grabcut[(distance_map > 0.5) & (distance_map <= 0.8)] = (
+                    cv2.GC_PR_FGD
+                )
+                mask_grabcut[distance_map_outside > 0.8] = cv2.GC_BGD
+
+                bgdModel = np.zeros((1, 65), np.float64)
+                fgdModel = np.zeros((1, 65), np.float64)
+
+                cv2.grabCut(
+                    img_np,
+                    mask_grabcut,
+                    None,
+                    bgdModel,
+                    fgdModel,
+                    5,
+                    cv2.GC_INIT_WITH_MASK,
+                )
+
+                result = np.where(
+                    (mask_grabcut == cv2.GC_FGD) | (mask_grabcut == cv2.GC_PR_FGD), 1, 0
+                ).astype(np.uint8)
+
+                # Get largest connected component
+                labeled_array, num_features = label(result)
+                if num_features > 0:
+                    largest_cc = np.argmax(np.bincount(labeled_array.flat)[1:]) + 1
+                    result = (labeled_array == largest_cc).astype(np.uint8)
+
+                # Find contours from refined mask
+                contours, _ = cv2.findContours(
+                    result, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                )
+
+                if contours:
+                    # Get the largest contour
+                    largest_contour = max(contours, key=cv2.contourArea)
+                    refined_contours.append(largest_contour.reshape(-1, 2))
+                else:
+                    # Fallback to original contour
+                    refined_contours.append(contour)
+
+            logger.info("GrabCut post-processing completed")
+            return np.array(refined_contours)
+
+        except Exception as e:
+            logger.error(f"Error in GrabCut post-processing: {e}")
+            return final_contours  # Return original contours if GrabCut fails
