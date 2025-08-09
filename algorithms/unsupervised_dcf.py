@@ -43,7 +43,6 @@ class DCF:
         model=VGG16,  # Peut être un torch.nn.Module ou un string
         learning_rate: float = 1e-1,  # Augmenté pour convergence plus rapide
         clip: float = 5e-2,  # Réduit pour stabilité
-        exponential_decay: float = 0.998,
         area_force: float = 0.0,
         sigma: float = 1,
         early_stopping_patience: int = 5,  # Réduit pour arrêt plus rapide
@@ -60,7 +59,6 @@ class DCF:
             model: Pre-trained model for extracting activations
             learning_rate: Learning rate for optimization
             clip: Gradient clipping value
-            exponential_decay: Exponential decay factor for learning rate
             area_force: Weight of the contour area constraint
             sigma: Standard deviation of the Gaussian smoothing operator
             early_stopping_patience: Number of epochs before early stopping
@@ -77,7 +75,6 @@ class DCF:
             n_epochs,
             learning_rate,
             clip,
-            exponential_decay,
             area_force,
             sigma,
             early_stopping_patience,
@@ -90,7 +87,6 @@ class DCF:
         self.model_type = detect_model_type(self.model)
         self.learning_rate = learning_rate
         self.clip = clip
-        self.ed = exponential_decay
         self.lambda_area = area_force
         self.device = None
         self.max_batch_size = max_batch_size
@@ -99,7 +95,6 @@ class DCF:
         self.early_stopping_threshold = early_stopping_threshold
         self.use_mixed_precision = use_mixed_precision
         self.do_apply_grabcut = do_apply_grabcut
-
         # 1. Optimisations GPU
         self._setup_gpu_optimizations()
 
@@ -154,7 +149,6 @@ class DCF:
         n_epochs: int,
         learning_rate: float,
         clip: float,
-        exponential_decay: float,
         area_force: float,
         sigma: float,
         early_stopping_patience: int,
@@ -167,8 +161,6 @@ class DCF:
             raise ValueError("learning_rate must be positive")
         if clip <= 0:
             raise ValueError("clip must be positive")
-        if not 0 < exponential_decay < 1:
-            raise ValueError("exponential_decay must be between 0 and 1")
         if sigma <= 0:
             raise ValueError("sigma must be positive")
         if early_stopping_patience < 0:
@@ -181,6 +173,7 @@ class DCF:
         try:
             self.activations = {}
             self.shapes = {}
+            self.spatial_dims = {}  # Pour stocker les dimensions spatiales des activations
 
             self._setup_activation_hooks()
 
@@ -238,6 +231,10 @@ class DCF:
             try:
                 device = input[0].device
                 self.activations[name] = output.to(device)
+                # Capturer les dimensions spatiales (H, W) de la couche
+                self.spatial_dims[name] = output.shape[
+                    2
+                ]  # Prendre H (ou W, ils sont égaux)
             except Exception as e:
                 logger.error(f"Error capturing activations: {e}")
                 raise
@@ -245,7 +242,7 @@ class DCF:
         return hook
 
     def multiscale_loss(
-        self, features: Tuple[list, list], weights: torch.Tensor, eps: float = 1e-6
+        self, features: Tuple[list, list], eps: float = 1e-6
     ) -> torch.Tensor:
         """
         Compute a multiscale loss based on features inside and outside the mask.
@@ -253,7 +250,6 @@ class DCF:
 
         Args:
             features: Tuple containing (features_inside, features_outside) for each scale
-            weights: Weights for each scale
             eps: Small value to avoid division by zero
 
         Returns:
@@ -265,18 +261,27 @@ class DCF:
             batch_size = features_inside[0].shape[0]
             energies = torch.zeros((nb_scales, batch_size), device=self.device)
 
-            # 2. Optimisations de calcul - Traitement par scale avec gestion des tailles différentes
+            scale_contributions = torch.zeros(nb_scales, device=self.device)
+
             for j in range(nb_scales):
                 diff = features_inside[j] - features_outside[j]
-                norm_diff = torch.linalg.vector_norm(diff, 2, dim=-2)[..., 0]
+                norm_diff = torch.linalg.vector_norm(diff, 2, dim=-2)[..., 0]  # (B,)
                 norm_activations = torch.linalg.vector_norm(
                     self.activations[j], 2, dim=(1, 2, 3)
-                )
-                norm_mse = -norm_diff / (norm_activations + eps)
+                )  # (B,)
+
+                norm_mse = -norm_diff / (norm_activations + eps)  # (B,)
                 energies[j] = norm_mse
 
-            return torch.sum(energies * weights[..., None], axis=0)
+                scale_contributions[j] = norm_diff.mean() / (
+                    norm_activations.mean() + eps
+                )
 
+            # ---- Dynamic weight computation ----
+            inv_contrib = 1.0 / (scale_contributions + eps)
+            dynamic_weights = inv_contrib / inv_contrib.sum()
+            dynamic_weights = dynamic_weights.view(nb_scales, 1)
+            return torch.sum(energies * dynamic_weights, dim=0)
         except Exception as e:
             logger.error(f"Error computing multiscale loss: {e}")
             raise
@@ -402,6 +407,10 @@ class DCF:
                     activations = self.model(preprocess_fn(img))
                     for i, activation in enumerate(activations):
                         self.activations[i] = activation.to(self.device)
+                        # Capturer les dimensions spatiales pour ces modèles aussi
+                        self.spatial_dims[i] = activation.shape[
+                            2
+                        ]  # Prendre H (ou W, ils sont égaux)
                 else:
                     # For other models (VGG), use normal forward pass
                     _ = self.model(preprocess_fn(img))
@@ -436,21 +445,8 @@ class DCF:
         """Configure processing components."""
         try:
             self.ctf = Contour_to_features(img.shape[-1] // (2**2), self.activations)
-            if self.model_type != "vgg16":
-                self.weights = torch.tensor(
-                    [1.0, 1 / 4.0, 1 / 8, 1 / 16],
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-            else:
-                self.weights = torch.tensor(
-                    [1 / (2**i) for i in range(len(self.activations))],
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-            self.weights = self.weights / torch.sum(self.weights)
-            self.weights.requires_grad = False
 
+            # Calculer les poids dynamiquement à partir des dimensions spatiales réelles
         except Exception as e:
             logger.error(f"Error configuring processing components: {e}")
             raise
@@ -508,14 +504,14 @@ class DCF:
                 with torch.cuda.amp.autocast():
                     features = self.ctf(contour)
                     batch_loss = (
-                        self.multiscale_loss(features, self.weights)
+                        self.multiscale_loss(features)
                         + self.lambda_area * area(contour)[:, 0]
                     )
                     loss = self.img_dim[0] * torch.mean(batch_loss)
             else:
                 features = self.ctf(contour)
                 batch_loss = (
-                    self.multiscale_loss(features, self.weights)
+                    self.multiscale_loss(features)
                     + self.lambda_area * area(contour)[:, 0]
                 )
                 loss = self.img_dim[0] * torch.mean(batch_loss)
@@ -679,7 +675,6 @@ class DCF:
 
                     index_stop = int(p[0]) - 10
                     index_stop = max(0, min(index_stop, len(contour_history_array) - 1))
-
                     final_contours[i] = contour_history_array[index_stop, i]
 
                 except Exception as e:
