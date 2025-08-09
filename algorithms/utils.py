@@ -44,8 +44,8 @@ def process_grabcut_single_helper(args: Tuple[np.ndarray, np.ndarray]) -> np.nda
         distance_map_outside = distance_map_outside / np.max(distance_map_outside)
 
         mask_grabcut = np.full(mask.shape, cv2.GC_PR_BGD, dtype=np.uint8)
-        mask_grabcut[distance_map > 0.3] = cv2.GC_FGD
-        mask_grabcut[(distance_map > 0.3) & (distance_map <= 0.8)] = cv2.GC_PR_FGD
+        mask_grabcut[distance_map > 0.2] = cv2.GC_FGD
+        mask_grabcut[(distance_map > 0.2) & (distance_map <= 0.8)] = cv2.GC_PR_FGD
         mask_grabcut[distance_map_outside > 0.8] = cv2.GC_BGD
 
         bgdModel = np.zeros((1, 65), np.float64)
