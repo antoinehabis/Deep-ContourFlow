@@ -10,6 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](./LICENSE)
 
 [![CI](https://github.com/antoinehabis/Deep-ContourFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/antoinehabis/Deep-ContourFlow/actions/workflows/ci.yml)
+[![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-md.svg)](https://huggingface.co/spaces/antoinehabis/DeepContourFlow)
 
 [![torch-contour downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
 [![torch-contour total downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
