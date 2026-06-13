@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite both the software and the paper below."
+title: "Deep ContourFlow"
+abstract: "Training-free active contours powered by deep features — unsupervised and one-shot image segmentation."
+type: software
+authors:
+  - family-names: Habis
+    given-names: Antoine
+  - family-names: Meas-Yedid
+    given-names: Vannary
+  - family-names: Angelini
+    given-names: Elsa
+  - family-names: Olivo-Marin
+    given-names: Jean-Christophe
+repository-code: "https://github.com/antoinehabis/Deep-ContourFlow"
+url: "https://github.com/antoinehabis/Deep-ContourFlow"
+license: MIT
+keywords:
+  - active contours
+  - image segmentation
+  - deep learning
+  - computer vision
+  - pytorch
+preferred-citation:
+  type: article
+  title: "Deep ContourFlow: Advancing Active Contours with Deep Learning"
+  authors:
+    - family-names: Habis
+      given-names: Antoine
+    - family-names: Meas-Yedid
+      given-names: Vannary
+    - family-names: Angelini
+      given-names: Elsa
+    - family-names: Olivo-Marin
+      given-names: Jean-Christophe
+  year: 2024
+  url: "https://arxiv.org/abs/2407.10696"
+  identifiers:
+    - type: other
+      value: "arXiv:2407.10696"
+      description: arXiv preprint
