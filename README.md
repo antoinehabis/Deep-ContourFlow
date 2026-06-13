@@ -9,6 +9,8 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2407.10696-b31b1b?style=for-the-badge)](https://arxiv.org/abs/2407.10696)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](./LICENSE)
 
+[![CI](https://github.com/antoinehabis/Deep-ContourFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/antoinehabis/Deep-ContourFlow/actions/workflows/ci.yml)
+
 [![torch-contour downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
 [![torch-contour total downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
 
@@ -18,7 +20,7 @@
 
 <div align="center">
 
-<img src="./assets/lion.png" alt="Unsupervised DCF: a contour evolving around a lion" width="100%">
+<img src="./assets/contour_evolution.gif" alt="Deep ContourFlow — a contour converging onto a lion" width="340">
 
 <sub><i>Unsupervised DCF — a single circle initialization flows toward the object boundary, guided only by deep features.</i></sub>
 
@@ -44,6 +46,7 @@ Starting from a simple circle, the contour is pushed to maximize the feature con
 
 <div align="center">
 
+<img src="./assets/lion.png" alt="Unsupervised DCF on a lion" width="100%">
 <img src="./assets/flower0.png" alt="Unsupervised DCF on a flower" width="100%">
 <img src="./assets/flower1.png" alt="Unsupervised DCF on a flower" width="100%">
 <img src="./assets/pineapple.png" alt="Unsupervised DCF on a pineapple" width="100%">
