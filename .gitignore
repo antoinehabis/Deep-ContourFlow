@@ -1,5 +1,20 @@
+# Python
+**/__pycache__/
+*.py[cod]
+*.egg-info
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor / tooling
+.claude/
+
+# Generated outputs
+visualisations/
+
+# Legacy / external
 Cytomine-python-client/
 cytomine/
-generate_annotations/delete_annotations.py
-generate_annotations/get_annotations.py
-**/__pycache__/

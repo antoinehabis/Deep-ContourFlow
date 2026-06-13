@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deep-contourflow"
+version = "0.1.0"
+description = "Training-free active contours powered by deep features (Deep ContourFlow)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Antoine Habis", email = "antoine.habis.tlcm@gmail.com" }]
+keywords = [
+    "active-contours",
+    "segmentation",
+    "deep-learning",
+    "computer-vision",
+    "pytorch",
+    "medical-imaging",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "numpy",
+    "torch",
+    "torchvision",
+    "torch-contour",
+    "scipy",
+    "opencv-python",
+    "tqdm",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+notebooks = ["jupyter", "notebook"]
+
+[project.urls]
+Homepage = "https://github.com/antoinehabis/Deep-ContourFlow"
+Paper = "https://arxiv.org/abs/2407.10696"
+Issues = "https://github.com/antoinehabis/Deep-ContourFlow/issues"
+
+[tool.setuptools.packages.find]
+include = ["deep_contourflow*"]
