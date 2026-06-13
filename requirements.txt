@@ -2,6 +2,7 @@ numpy
 torch
 torchvision
 torch-contour
+numba
 scipy
 opencv-python
 tqdm

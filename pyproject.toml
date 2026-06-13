@@ -30,6 +30,7 @@ dependencies = [
     "torch",
     "torchvision",
     "torch-contour",
+    "numba",  # required at import time by torch-contour (not declared by it)
     "scipy",
     "opencv-python",
     "tqdm",
