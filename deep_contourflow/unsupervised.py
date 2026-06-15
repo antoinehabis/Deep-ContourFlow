@@ -5,14 +5,13 @@ from typing import Tuple
 
 import numpy as np
 import torch
-from scipy import optimize
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch_contour import CleanContours, Smoothing, area
 from tqdm import tqdm
 
-from .features import Contour_to_features, piecewise_linear
+from .features import Contour_to_features
 from .models.models import (
     VGG16,
     create_model,
@@ -39,16 +38,16 @@ class DCF:
 
     def __init__(
         self,
-        n_epochs: int = 50,
+        n_epochs: int = 250,
         model=VGG16,  # torch.nn.Module instance, class, or string (e.g. "vgg16")
-        learning_rate: float = 1e-1,
-        clip: float = 5e-2,
-        area_force: float = 0.0,
-        sigma: float = 1,
+        learning_rate: float = 1e-2,
+        clip: float = 2e-1,
+        area_force: float = 1e-3,
+        sigma: float = 0.5,
         early_stopping_patience: int = 5,
         early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = True,
-        do_apply_grabcut: bool = False,
+        do_apply_grabcut: bool = True,
     ):
         """
         Initialize the DCF algorithm with the specified parameters.
@@ -244,8 +243,6 @@ class DCF:
             batch_size = features_inside[0].shape[0]
             energies = torch.zeros((nb_scales, batch_size), device=self.device)
 
-            scale_contributions = torch.zeros(nb_scales, device=self.device)
-
             for j in range(nb_scales):
                 diff = features_inside[j] - features_outside[j]
                 norm_diff = torch.linalg.vector_norm(diff, 2, dim=-2)[..., 0]  # (B,)
@@ -256,15 +253,13 @@ class DCF:
                 norm_mse = -norm_diff / (norm_activations + eps)  # (B,)
                 energies[j] = norm_mse
 
-                scale_contributions[j] = norm_diff.mean() / (
-                    norm_activations.mean() + eps
-                )
-
-            # ---- Dynamic weight computation ----
-            inv_contrib = 1.0 / (scale_contributions + eps)
-            dynamic_weights = inv_contrib / inv_contrib.sum()
-            dynamic_weights = dynamic_weights.view(nb_scales, 1)
-            return torch.sum(energies * dynamic_weights, dim=0)
+            # ---- Uniform scale weighting ----
+            # NOTE: a previous "dynamic" scheme weighted scales by the INVERSE of
+            # their inside/outside contrast, which down-weighted the most
+            # discriminative scales (backwards). Uniform weighting is both simpler
+            # and markedly better in practice.
+            weights = torch.full((nb_scales, 1), 1.0 / nb_scales, device=self.device)
+            return torch.sum(energies * weights, dim=0)
         except Exception as e:
             logger.error(f"Error computing multiscale loss: {e}")
             raise
@@ -580,17 +575,18 @@ class DCF:
                         final_contours[i] = contour_history_array[-1, i]
                         continue
 
-                    p, _ = optimize.curve_fit(
-                        piecewise_linear,
-                        np.arange(len(valid_loss)),
-                        valid_loss,
-                        bounds=(
-                            np.array([0, -np.inf, -np.inf, -np.inf]),
-                            np.array([len(valid_loss), np.inf, np.inf, np.inf]),
-                        ),
-                    )
-
-                    index_stop = int(p[0]) - 10
+                    # Robust per-image stopping: smooth the energy curve, then stop
+                    # once a fraction ``tau`` of the total descent has been achieved.
+                    # Replaces a fragile piecewise-linear curve fit + fixed offset.
+                    k = min(5, len(valid_loss))
+                    sm = np.convolve(valid_loss, np.ones(k) / k, mode="same")
+                    total = sm[0] - sm.min()
+                    if total <= 1e-12:
+                        index_stop = len(valid_loss) - 1
+                    else:
+                        tau = 0.9
+                        reached = np.where((sm[0] - sm) >= tau * total)[0]
+                        index_stop = int(reached[0]) if len(reached) else len(valid_loss) - 1
                     index_stop = max(0, min(index_stop, len(contour_history_array) - 1))
                     final_contours[i] = contour_history_array[index_stop, i]
 
