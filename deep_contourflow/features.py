@@ -438,7 +438,7 @@ class Distance_map_to_isoline_features(Module):
         return features_isolines, features_mask
 
 
-def define_contour_init(n, shape="circle", size=0.5, center=None, angle=0, width=None):
+def define_contour_init(n, shape="circle", size=0.35, center=None, angle=0, width=None):
     """
     Parameters
     ----------
