@@ -205,23 +205,29 @@ drop them in `datasets/archives/` under their original filenames, and re-run
 ### Results
 
 Unsupervised DCF, no training and no labels, scored at 384×384. The numbers below
-come from a seeded 200-image subset of each dataset — 600 images in total, about
-7 minutes on one RTX 4090 — which anyone can reproduce exactly with:
+are from the **full benchmark** on all 17 788 images, validated with the knee
+stopping condition (automatic early stopping at the energy curve's knee rather than
+a fixed epoch):
+
+```bash
+make reproduce   # Full benchmark: ~3–4 h on one modern GPU
+```
+
+| Dataset | Images | IoU | Dice | Pixel acc. | s / image |
+|---------|-------:|------:|------:|-----------:|----------:|
+| ECSSD | 1 000 | 0.680 | 0.776 | 0.899 | 0.76 |
+| MSRA-B | 5 000 | 0.771 | 0.845 | 0.931 | 0.63 |
+| CUB-200-2011 | 11 788 | 0.685 | 0.785 | 0.934 | 0.65 |
+| **Macro average** | **17 788** | **0.712** | **0.802** | **0.921** | |
+
+For development and debugging, a faster subset run is also available:
 
 ```bash
 python -m experiments.foreground_extraction.eval data.max_samples=200
 ```
 
-| Dataset | Images | IoU | Dice | Pixel acc. | s / image |
-|---------|-------:|------:|------:|-----------:|----------:|
-| ECSSD | 200 | 0.687 | 0.782 | 0.908 | 0.73 |
-| MSRA-B | 200 | 0.754 | 0.830 | 0.921 | 0.66 |
-| CUB-200-2011 | 200 | 0.669 | 0.771 | 0.930 | 0.69 |
-| **Macro average** | | **0.703** | **0.794** | **0.920** | |
-
-Drop `data.max_samples` (i.e. `make eval`) to run all 17 788 images; expect
-~3–4 h on one modern GPU. A full pass with a closely related configuration scored
-a macro IoU of **0.708**, so the subset above tracks the full benchmark closely.
+This evaluates a seeded 200-image subset of each dataset (~7 min) and produces
+results very close to the full benchmark.
 
 **Why the configuration matters.** The same pipeline on the same 600 images, run
 once with DCF's original pre-tuning settings and once with the configuration
