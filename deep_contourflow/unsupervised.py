@@ -50,41 +50,55 @@ class DCF:
 
     def __init__(
         self,
-        n_epochs: int = 300,
+        n_epochs: int = 250,
         model=VGG16,  # torch.nn.Module instance, class, or string (e.g. "vgg16")
-        learning_rate: float = 2e-3,
+        learning_rate: float = 1e-2,
         clip: float = 2e-1,
-        area_force: float = 1.0,  # negative = balloon expansion (best eval config)
-        sigma: float = 0.2,
-        early_stopping_patience: int = 5,
-        early_stopping_threshold: float = 1e-4,
+        area_force: float = -2e-2,  # negative = balloon expansion (outward pressure)
+        sigma: float = 0.9,
+        early_stopping_patience: int = 20,
+        early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = True,
         do_apply_grabcut: bool = True,
         compile: bool = True,
         process_size: int = 384,
         exponential_decay: Optional[float] = None,
         scale_weights: Union[str, list, tuple] = "uniform",
-        lr_schedule: Optional[str] = "cosine",
+        lr_schedule: Optional[str] = "plateau",
         lr_restart_period: int = 50,
         edge_balloon: float = 0.0,
         edge_gate: float = 3.0,
-        edge_attract: float = 10
+        edge_attract: float = 0.0,
     ):
         """
         Initialize the DCF algorithm with the specified parameters.
 
+        The defaults are the configuration validated on the foreground-extraction
+        benchmark (ECSSD + MSRA-B + CUB-200-2011); see experiments/ and the README.
+        They were tuned on 384x384 natural images, so they are a sensible starting
+        point rather than a universal optimum -- other domains (histology,
+        dermoscopy) may want their own sweep.
+
         Args:
-            n_epochs: Maximum number of training epochs
+            n_epochs: Maximum number of contour-evolution steps
             model: Pre-trained model for extracting activations
             learning_rate: Learning rate for optimization
-            clip: Gradient clipping value
-            area_force: Weight of the contour area constraint
+            clip: Maximum contour displacement per step (normalized)
+            area_force: Weight of the area term, *relative* to the per-sample
+                separation energy. Negative expands the contour (balloon
+                pressure), positive shrinks it. Dimensionless, useful range is
+                roughly [-0.05, 0]; large magnitudes degrade badly.
             sigma: Standard deviation of the Gaussian smoothing operator
-            early_stopping_patience: Number of epochs before early stopping
+            early_stopping_patience: Flat-loss steps before a sample is frozen
             early_stopping_threshold: Minimum improvement threshold for early stopping
             use_mixed_precision: Use mixed precision for GPU acceleration
             do_apply_grabcut: Apply GrabCut post-processing
-            max_batch_size: Maximum batch size for processing
+            process_size: Internal resolution, so convergence does not depend on
+                the input size
+            scale_weights: Per-scale weighting of the multiscale energy
+            lr_schedule: "plateau" | "cosine" | "exponential"
+            edge_balloon, edge_gate, edge_attract: experimental edge terms,
+                disabled by default (neutral on the benchmark)
 
         Raises:
             ValueError: If parameters are invalid

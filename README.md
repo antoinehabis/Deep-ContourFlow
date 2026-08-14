@@ -117,15 +117,20 @@ height = 512
 img = cv2.resize(plt.imread("data/pineapple.jpg"), (height, height)).astype(np.uint8)
 tensor = (torch.tensor(np.moveaxis(img, -1, 0)[None]) / 255).to(device)
 
-# 2. Initialize a circular contour
-contour_init, _ = define_contour_init(n=height, shape="circle", size=0.5)
+# 2. Initialize a circular contour at 35% of the image
+contour_init, _ = define_contour_init(n=height, shape="circle", size=0.35)
 contour_init = CleanContours().interpolate(contour_init, 200).clip(0, 1)
 contour_init = torch.tensor(contour_init)[None, None].float().to(device)
 
 # 3. Evolve the contour — no training, no labels
-dcf = DCF(model="vgg16", n_epochs=100, learning_rate=1e-2, area_force=1e-3, sigma=5e-1)
+dcf = DCF(model="vgg16")
 contours, loss_history, final_contour = dcf.predict(tensor, contour_init)
 ```
+
+The defaults are the configuration validated on the benchmark below, so there is
+nothing to tune to get those numbers. Every one of them can still be overridden —
+`DCF(model="vgg16", n_epochs=100, sigma=0.5, area_force=0.0)` — and the full list
+is in the `UnsupervisedDCF` docstring.
 
 ### One-shot segmentation
 
@@ -209,22 +214,23 @@ python -m experiments.foreground_extraction.eval data.max_samples=200
 
 | Dataset | Images | IoU | Dice | Pixel acc. | s / image |
 |---------|-------:|------:|------:|-----------:|----------:|
-| ECSSD | 200 | 0.685 | 0.780 | 0.906 | 0.73 |
-| MSRA-B | 200 | 0.756 | 0.832 | 0.920 | 0.65 |
-| CUB-200-2011 | 200 | 0.659 | 0.762 | 0.928 | 0.68 |
-| **Macro average** | | **0.700** | **0.791** | **0.918** | |
+| ECSSD | 200 | 0.687 | 0.782 | 0.908 | 0.73 |
+| MSRA-B | 200 | 0.754 | 0.830 | 0.921 | 0.66 |
+| CUB-200-2011 | 200 | 0.669 | 0.771 | 0.930 | 0.69 |
+| **Macro average** | | **0.703** | **0.794** | **0.920** | |
 
 Drop `data.max_samples` (i.e. `make eval`) to run all 17 788 images; expect
 ~3–4 h on one modern GPU. A full pass with a closely related configuration scored
 a macro IoU of **0.708**, so the subset above tracks the full benchmark closely.
 
-**Why the tuned configuration matters.** The same pipeline on the same 600 images,
-run once with the library's untuned defaults and once with the shipped config:
+**Why the configuration matters.** The same pipeline on the same 600 images, run
+once with DCF's original pre-tuning settings and once with the configuration
+shipped here — which is also what `UnsupervisedDCF()` now uses by default:
 
 | Configuration | IoU | Dice | Pixel acc. |
 |---------------|------:|------:|-----------:|
-| Untuned defaults | 0.221 | 0.332 | 0.260 |
-| **`conf/config.yaml` (shipped)** | **0.700** | **0.791** | **0.918** |
+| Original pre-tuning settings | 0.221 | 0.332 | 0.260 |
+| **Shipped defaults** | **0.703** | **0.794** | **0.920** |
 
 The gap comes mostly from four things: starting from a smaller circle
 (`init.size` 0.35), letting the balloon force **expand** rather than shrink
