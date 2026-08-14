@@ -82,6 +82,9 @@ pip install -e .
 
 This installs the `deep_contourflow` package (and all dependencies) in editable mode, so you can `from deep_contourflow import UnsupervisedDCF, OneShotDCF` from anywhere. Prefer a bare dependency install? `pip install -r requirements.txt` also works.
 
+To reproduce the published benchmark numbers instead, jump to
+[**Benchmark**](#-benchmark--reproducing-the-results) — it is one `make reproduce`.
+
 DCF builds on the companion library [**`torch-contour`**](https://pypi.org/project/torch-contour/) (`Contour_to_mask`, `Contour_to_distance_map`, `CleanContours`, `Smoothing`, …), which is installed automatically.
 
 ---
@@ -114,15 +117,20 @@ height = 512
 img = cv2.resize(plt.imread("data/pineapple.jpg"), (height, height)).astype(np.uint8)
 tensor = (torch.tensor(np.moveaxis(img, -1, 0)[None]) / 255).to(device)
 
-# 2. Initialize a circular contour
-contour_init, _ = define_contour_init(n=height, shape="circle", size=0.5)
+# 2. Initialize a circular contour at 35% of the image
+contour_init, _ = define_contour_init(n=height, shape="circle", size=0.35)
 contour_init = CleanContours().interpolate(contour_init, 200).clip(0, 1)
 contour_init = torch.tensor(contour_init)[None, None].float().to(device)
 
 # 3. Evolve the contour — no training, no labels
-dcf = DCF(model="vgg16", n_epochs=100, learning_rate=1e-2, area_force=1e-3, sigma=5e-1)
+dcf = DCF(model="vgg16")
 contours, loss_history, final_contour = dcf.predict(tensor, contour_init)
 ```
+
+The defaults are the configuration validated on the benchmark below, so there is
+nothing to tune to get those numbers. Every one of them can still be overridden —
+`DCF(model="vgg16", n_epochs=100, sigma=0.5, area_force=0.0)` — and the full list
+is in the `UnsupervisedDCF` docstring.
 
 ### One-shot segmentation
 
@@ -145,6 +153,128 @@ See the notebook for the full data-loading and visualization code.
 
 ---
 
+## 📊 Benchmark — reproducing the results
+
+DCF is evaluated as an **unsupervised foreground extractor** on three standard
+object / saliency datasets. Nothing is trained and no mask is ever shown to the
+algorithm — the ground truth is used *only* to score the contours it produces.
+
+### One command
+
+```bash
+make reproduce
+```
+
+That downloads the three datasets (~1.3 GiB), converts them to a common layout,
+and runs the benchmark. Every step also works on its own:
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| 0 | `make install` | `pip install -e ".[benchmark]"` — the package plus Hydra/Pillow |
+| 1 | `make download` | Fetch + checksum + extract the datasets into `datasets/raw/` |
+| 2 | `make format` | Convert them to `datasets/formatted/<dataset>/<id>/{image.jpg, mask.jpg}` |
+| 3 | `make eval` | Run DCF over all 17 788 images and report IoU / Dice / pixel accuracy |
+
+`make help` lists every target. Two shortcuts are useful while setting things up:
+
+```bash
+make smoke   # ~1 min — 4 ECSSD images, 15 steps: proves the pipeline runs
+make quick   # ~7 min — the seeded 200-image subset reported below
+```
+
+### The datasets
+
+Everything is fetched from the datasets' official hosts. Each archive is checked
+against a known size **and** checksum before it is unpacked, downloads resume if
+interrupted, and re-running skips whatever is already in place.
+
+| Dataset | Images | Content | Download |
+|---------|-------:|---------|----------|
+| [**ECSSD**](https://www.cse.cuhk.edu.hk/leojia/projects/hsaliency/dataset.html) | 1 000 | Complex-scene saliency, one dominant object | 65 MiB |
+| [**MSRA-B**](https://mmcheng.net/msra10k/) | 5 000 | Salient objects in natural images | 109 MiB |
+| [**CUB-200-2011**](https://www.vision.caltech.edu/datasets/cub_200_2011/) | 11 788 | Birds of 200 species, figure-ground masks | 1.1 GiB |
+
+Disk budget: ~1.3 GiB of archives, ~1.6 GiB extracted, ~1.3 GiB formatted. The
+archives are only a cache — delete `datasets/archives/` (or pass
+`--delete-archives`) once you are done.
+
+If a host is unreachable, download the archives by hand from the links above,
+drop them in `datasets/archives/` under their original filenames, and re-run
+`make download`: the checksum check will pick them up instead of downloading.
+
+### Results
+
+Unsupervised DCF, no training and no labels, scored at 384×384. The numbers below
+come from a seeded 200-image subset of each dataset — 600 images in total, about
+7 minutes on one RTX 4090 — which anyone can reproduce exactly with:
+
+```bash
+python -m experiments.foreground_extraction.eval data.max_samples=200
+```
+
+| Dataset | Images | IoU | Dice | Pixel acc. | s / image |
+|---------|-------:|------:|------:|-----------:|----------:|
+| ECSSD | 200 | 0.687 | 0.782 | 0.908 | 0.73 |
+| MSRA-B | 200 | 0.754 | 0.830 | 0.921 | 0.66 |
+| CUB-200-2011 | 200 | 0.669 | 0.771 | 0.930 | 0.69 |
+| **Macro average** | | **0.703** | **0.794** | **0.920** | |
+
+Drop `data.max_samples` (i.e. `make eval`) to run all 17 788 images; expect
+~3–4 h on one modern GPU. A full pass with a closely related configuration scored
+a macro IoU of **0.708**, so the subset above tracks the full benchmark closely.
+
+**Why the configuration matters.** The same pipeline on the same 600 images, run
+once with DCF's original pre-tuning settings and once with the configuration
+shipped here — which is also what `UnsupervisedDCF()` now uses by default:
+
+| Configuration | IoU | Dice | Pixel acc. |
+|---------------|------:|------:|-----------:|
+| Original pre-tuning settings | 0.221 | 0.332 | 0.260 |
+| **Shipped defaults** | **0.703** | **0.794** | **0.920** |
+
+The gap comes mostly from four things: starting from a smaller circle
+(`init.size` 0.35), letting the balloon force **expand** rather than shrink
+(`area_force` -0.02), stopping at the knee of the energy curve instead of running
+to a fixed epoch, and the GrabCut refinement of the final contour.
+
+`area_force` is a *relative* weight — the area term is scaled by the per-sample
+separation energy — so it is dimensionless and the useful range is small. Swept
+over the 600-image subset it peaks around -0.02 and degrades in both directions
+(0.703 at -0.02, 0.696 at 0, 0.696 at -0.15, 0.609 at -1.0).
+
+### How a score is produced
+
+Each image is resized to a 384×384 square, a solid border frame is cropped if one
+is detected, a circle is initialized at 35 % of the image and evolved for at most
+250 steps, the evolution is stopped at the knee of its energy curve, GrabCut
+refines the final contour, and the resulting polygon is rasterized and compared
+to the ground truth. Per-dataset scores are averaged over images; the macro
+average weights each **dataset** equally, so the 11 788-image CUB does not drown
+out the 1 000-image ECSSD.
+
+The full procedure, and every knob, is documented in
+[`experiments/foreground_extraction/`](./experiments/foreground_extraction/).
+
+### Notes on reproducibility
+
+- **The config is pinned.** `experiments/foreground_extraction/conf/config.yaml`
+  sets *every* DCF hyperparameter explicitly instead of inheriting library
+  defaults, so changing a default in `deep_contourflow` cannot silently move
+  these numbers. Override any of them from the command line:
+  ```bash
+  python -m experiments.foreground_extraction.eval dcf.sigma=0.5 'datasets=[ecssd]'
+  ```
+- **Subsets are seeded.** `data.max_samples=N` draws a fixed random subset
+  (`data.seed`, default 1234) rather than the first N ids — which on CUB would be
+  a single bird species.
+- **Runs vary by ~±0.01 IoU.** DCF enables cuDNN autotuning and mixed precision,
+  so GPU results are not bit-deterministic. Differences smaller than 0.01 IoU are
+  noise, not signal.
+- **Formatting is deterministic.** Re-running `make format` reproduces the image
+  and mask files byte for byte, and skips samples that already exist.
+
+---
+
 ## 🔍 How it works
 
 DCF revisits the classical **active contour (snake)** idea with modern deep features. A curve $\Gamma$ is represented by a set of points and deformed by gradient descent — but the energy that drives it comes from a **pretrained, frozen CNN** rather than raw image gradients.
@@ -155,7 +285,7 @@ DCF revisits the classical **active contour (snake)** idea with modern deep feat
    - **Unsupervised:** maximize the contrast between inside and outside — minimize $-\lVert f_\text{in} - f_\text{out}\rVert\,/\,\lVert \text{activations}\rVert$ across scales.
    - **One-shot:** minimize the distance between the query's contour features and the *support* features aggregated at `fit()` time over many augmentations.
 4. **Gradient flow.** The contour points are the **only** optimized variables. The displacement field is Gaussian-smoothed (`sigma`) and clipped (`clip`) for stable, regular evolution; an optional area term prevents collapse/explosion.
-5. **Stopping.** A piecewise-linear fit on the loss curve (unsupervised) or early-stopping (one-shot) selects when to stop, and an optional GrabCut post-processing refines the final boundary.
+5. **Stopping.** Both modes stop the same way: the loss curve is a staircase — descents separated by plateaus where the contour settles — so the contour is taken at the **knee**, the onset of the last plateau (`deep_contourflow.knee`), rather than at the last epoch or the global minimum, which keep creeping past the object onto sub-parts. An optional GrabCut post-processing then refines the boundary.
 
 Because the backbone is never updated, DCF needs **zero training** — it works on a single image, and adapts to new domains simply by swapping the backbone.
 
@@ -164,16 +294,35 @@ Because the backbone is never updated, DCF needs **zero training** — it works 
 ## 📁 Repository layout
 
 ```
-deep_contourflow/        # The installable package
-├── unsupervised.py      #   UnsupervisedDCF
-├── oneshot.py           #   OneShotDCF (fit + predict)
-├── features.py          #   Feature aggregation & contour utilities
-├── postprocessing.py    #   Optional GrabCut refinement
-├── visualization.py     #   Contour-evolution plotting helpers
-└── models/              #   Frozen backbones (VGG16, ResNet, ResNet-FPN)
+deep_contourflow/         # The installable package
+├── unsupervised.py       #   UnsupervisedDCF
+├── oneshot.py            #   OneShotDCF (fit + predict)
+├── features.py           #   Feature aggregation & contour utilities
+├── knee.py               #   Where to stop the evolution (knee of the energy curve)
+├── postprocessing.py     #   Optional GrabCut refinement
+├── visualization.py      #   Contour-evolution plotting helpers
+└── models/               #   Frozen backbones (VGG16, ResNet, ResNet-FPN)
+
+scripts/
+├── download_datasets.py  # Fetch + checksum + extract the benchmark datasets
+└── format_datasets.py    # Convert them all to one <id>/{image.jpg, mask.jpg} layout
+
+experiments/foreground_extraction/
+├── conf/config.yaml      # Every benchmark hyperparameter, pinned
+├── dataset.py            # Dataset, dataloader, frame crop/remap, contour init
+├── metrics.py            # IoU / Dice / pixel accuracy
+├── eval.py               # Benchmark entry point (Hydra)
+└── results/              # One timestamped folder per run + latest.json
+
+datasets/                 # Created by `make datasets` — git-ignored
+├── archives/             #   Downloaded .zip / .tgz (cache; safe to delete)
+├── raw/                  #   Extracted datasets, as published
+└── formatted/            #   <dataset>/<image_id>/{image.jpg, mask.jpg}
+
 notebooks/                # Ready-to-run notebooks
-data/                    # Sample images (+ ground-truth masks in data/gt)
-assets/                  # Figures used in this README
+data/                     # Sample images (+ ground-truth masks in data/gt)
+assets/                   # Figures used in this README
+Makefile                  # make help / datasets / eval / reproduce
 ```
 
 ---
@@ -193,6 +342,12 @@ If you use this code, please cite:
       url          = {https://arxiv.org/abs/2407.10696},
 }
 ```
+
+If you run the benchmark, please also cite the datasets it uses — CUB-200-2011
+(Wah *et al.*, 2011), ECSSD (Yan *et al.*, CVPR 2013) and MSRA-B (Liu *et al.*,
+"Learning to Detect A Salient Object", CVPR 2007). Each is redistributed by its
+original authors under its own terms; `scripts/download_datasets.py` only fetches
+them from those official hosts.
 
 ---
 

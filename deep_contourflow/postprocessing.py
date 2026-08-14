@@ -148,6 +148,60 @@ def apply_grabcut_postprocessing_parallel(
         return final_contours  # Return original contours if parallel processing fails
 
 
+def _resample_closed_contour(c: np.ndarray, k: int) -> np.ndarray:
+    """Resample a polygon (P, 2) to exactly k points, evenly spaced along its perimeter."""
+    c = np.asarray(c, dtype=np.float64).reshape(-1, 2)
+    if len(c) < 2:
+        return np.zeros((k, 2), dtype=np.float64)
+    cc = np.vstack([c, c[:1]])  # close the loop
+    seg = np.sqrt((np.diff(cc, axis=0) ** 2).sum(1))
+    d = np.concatenate([[0.0], np.cumsum(seg)])
+    total = d[-1]
+    if total <= 0:
+        return np.repeat(c[:1], k, axis=0)
+    t = np.linspace(0.0, total, k, endpoint=False)
+    x = np.interp(t, d, cc[:, 0])
+    y = np.interp(t, d, cc[:, 1])
+    return np.stack([x, y], axis=1)
+
+
+def apply_grabcut_fixed_length(
+    img: np.ndarray, final_contours: np.ndarray
+) -> np.ndarray:
+    """GrabCut refinement, per image, resampled to a fixed point count.
+
+    Fixes two problems of the parallel/sequential versions:
+      * ``np.array(results)`` over GrabCut contours of differing point counts raised
+        'inhomogeneous shape' and silently fell back to the un-refined contours for
+        the WHOLE batch. Each result is resampled to the input's K points so the
+        batch stays homogeneous ``(B, K, 2)``.
+      * ``cv2.grabCut`` can SEGFAULT on a degenerate/near-zero-area seed. Contours
+        with area < 16px are kept as-is (no GrabCut).
+
+    Args:
+        img: Input images ``(B, C, H, W)``.
+        final_contours: DCF contours ``(B, K, 2)`` in pixel coords.
+    Returns:
+        Refined contours ``(B, K, 2)``.
+    """
+    k = final_contours.shape[1]
+    out = []
+    for i in range(img.shape[0]):
+        ci = np.asarray(final_contours[i], dtype=np.float64).reshape(-1, 2)
+        x, y = ci[:, 0], ci[:, 1]
+        area_px = 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+        if not np.isfinite(area_px) or area_px < 16.0:
+            out.append(_resample_closed_contour(ci, k))
+            continue
+        try:
+            res = process_grabcut_single_helper((img[i], final_contours[i]))
+            out.append(_resample_closed_contour(res, k))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"GrabCut failed for image {i}, keeping original: {e}")
+            out.append(_resample_closed_contour(ci, k))
+    return np.array(out)
+
+
 def apply_grabcut_postprocessing_sequential(
     img: np.ndarray, final_contours: np.ndarray
 ) -> np.ndarray:
