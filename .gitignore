@@ -14,7 +14,18 @@ venv/
 
 # Generated outputs
 visualisations/
+experiments/**/results/
+outputs/
+
+# Datasets: downloaded archives, extracted sources and the formatted copy.
+# Recreate them with `make datasets`.
+datasets/
+*.zip
+*.tgz
+*.tar.gz
+formatted_datasets
 
 # Legacy / external
+cvpr2016_cub/
 Cytomine-python-client/
 cytomine/

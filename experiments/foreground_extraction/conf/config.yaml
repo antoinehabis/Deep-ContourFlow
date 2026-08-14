@@ -1,0 +1,62 @@
+# Reproduction config for the DCF foreground-extraction benchmark.
+#
+# Every DCF hyperparameter is pinned explicitly (rather than inherited from the
+# library defaults) so that a change to a default in `deep_contourflow` can never
+# silently move the published numbers.
+#
+# Override anything on the CLI with Hydra's key=value syntax, e.g.:
+#   python -m experiments.foreground_extraction.eval 'datasets=[ecssd]' data.max_samples=25
+# Relative paths are resolved against the repo root.
+
+device: auto                     # auto | cuda | mps | cpu
+output_dir: experiments/foreground_extraction/results
+datasets: [ecssd, msra_b, cub]   # evaluated in this order (cheapest first)
+
+# --------------------------------------------------------------------------- #
+# DCF hyperparameters — forwarded verbatim to UnsupervisedDCF(**dcf).
+# These are the tuned values behind the reported scores; see README.
+# --------------------------------------------------------------------------- #
+dcf:
+  model: vgg16                   # frozen backbone: vgg16 | resnet50 | dino
+  n_epochs: 250                  # max gradient steps of the contour evolution
+  learning_rate: 0.01            # contour update step size
+  area_force: -0.02              # negative = balloon EXPANSION; swept, peak at -0.02/-0.05
+  sigma: 0.9                     # Gaussian smoothing of the contour displacement
+  clip: 0.2                      # max contour displacement per step (normalized)
+  process_size: 384              # internal resolution; keeps convergence size-independent
+  early_stopping_patience: 20    # freeze a sample after this many flat-loss steps
+  early_stopping_threshold: 1.0e-6
+  use_mixed_precision: true      # faster on GPU, auto-disabled off CUDA
+  do_apply_grabcut: true         # GrabCut refinement of the final contour (large gain)
+  compile: true                  # torch.compile the mask rasterizer (torch-contour >= 1.4.5)
+  scale_weights: uniform         # per-scale weighting of the multiscale energy
+  lr_schedule: plateau           # plateau | cosine | exponential
+  exponential_decay: null        # only used when lr_schedule == exponential
+  # Experimental edge terms, off for the reference numbers (see README > Reproducing).
+  edge_attract: 0.0
+  edge_balloon: 0.0
+  edge_gate: 3.0
+
+# The closed curve the evolution starts from.
+init:
+  shape: circle                  # circle | square
+  size: 0.35                     # radius as a fraction of the image
+  nb_nodes: 200                  # number of contour control points
+
+# Data loading.
+data:
+  root: datasets/formatted       # <root>/<dataset>/<image_id>/{image.jpg, mask.jpg}
+  image_size: 384                # images/masks resized to this square; metrics scored here
+  batch_size: 4
+  num_workers: 4
+  max_samples: null              # cap per dataset (null = every image)
+  seed: 1234                     # which images max_samples draws (fixed => comparable runs)
+  shuffle: false
+  remove_frame: true             # crop a solid border frame before running DCF
+
+# Keep Hydra's per-run artifacts under results/ and don't change the working dir.
+hydra:
+  run:
+    dir: experiments/foreground_extraction/results/${now:%Y-%m-%d_%H-%M-%S}
+  job:
+    chdir: false
