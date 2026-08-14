@@ -1,9 +1,11 @@
 numpy
 torch
 torchvision
-torch-contour
+torch-contour>=1.4.5
 numba
 scipy
 opencv-python
 tqdm
 matplotlib
+hydra-core
+pillow

@@ -80,7 +80,12 @@ GRAY_MID  = "#7A7A7A"
 
 # Temporal gradient: warm (early) → cool (late)
 _STEP_COLORS = ["#F97B6B", "#F5C842", "#3ECFB2", "#6BCFF5", "#5B6CF9"]
+# Distinct colour for the knee-selected (final) contour — outside the gradient
+KNEE_COLOR = "#9C36B5"  # purple
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+from .knee import knee_index as _knee_index  # shared with DCF._compute_final_contours
 
 
 def _to_uint8(img) -> np.ndarray:
@@ -121,10 +126,18 @@ def _draw_row(
     step_indices: np.ndarray,
     colors: list,
     row_label: Optional[str] = None,
+    titles: Optional[list] = None,
+    highlight_col: Optional[int] = None,
 ) -> None:
-    """Fill one row of axes for batch element `b`."""
+    """Fill one row of axes for batch element `b`.
+
+    ``highlight_col`` (if given) is drawn thicker and titled in ``KNEE_COLOR`` —
+    used to mark the knee-selected final contour. ``titles`` overrides the default
+    per-column ``"step N"`` label.
+    """
     for col, (epoch_idx, color) in enumerate(zip(step_indices, colors)):
         ax = axes[col]
+        is_knee = highlight_col is not None and col == highlight_col
         contour_xy = contour_history[epoch_idx, b].reshape(-1, 2)
         loss_val = float(losses[epoch_idx, b])
 
@@ -139,17 +152,22 @@ def _draw_row(
         ax.fill(contour_xy[:, 0], contour_xy[:, 1],
                 color=color, alpha=0.18, zorder=4)
         ax.plot(closed[:, 0], closed[:, 1],
-                color=color, linewidth=2.5, zorder=5, solid_capstyle="round")
+                color=color, linewidth=3.4 if is_knee else 2.5,
+                zorder=5, solid_capstyle="round")
 
         # Restore image limits
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.axis("off")
 
-        if row_label is None or b == 0:
+        # Titles: step columns only on the top row; the knee column always (its
+        # selected step differs per sample).
+        if is_knee or row_label is None or b == 0:
+            title = titles[col] if titles is not None else f"step {epoch_idx + 1}"
             ax.set_title(
-                f"step {epoch_idx + 1}",
-                fontsize=10, fontweight=500, color=GRAY_DARK, pad=8,
+                title,
+                fontsize=10, fontweight=600 if is_knee else 500,
+                color=KNEE_COLOR if is_knee else GRAY_DARK, pad=8,
             )
         ax.text(
             0.5, -0.10,
@@ -163,6 +181,48 @@ def _draw_row(
             row_label, fontsize=9, color=GRAY_MID, rotation=90, labelpad=6,
         )
         axes[0].yaxis.set_visible(True)
+
+
+def _draw_curve(
+    ax,
+    y: np.ndarray,
+    step_indices: np.ndarray,
+    colors: list,
+    knee_idx: Optional[int],
+) -> None:
+    """Energy curve for one sample, with the snapshot steps and knee marked."""
+    n = len(y)
+    x = np.arange(n)
+
+    ax.set_facecolor(BG)
+    ax.plot(x, y, color=GRAY_MID, linewidth=1.6, zorder=2)
+
+    # Snapshot steps, coloured to match the contour panels above.
+    for idx, c in zip(step_indices, colors):
+        ax.scatter([idx], [y[idx]], color=c, s=30, zorder=4,
+                   edgecolor="white", linewidth=0.8)
+
+    # Knee / stop point: dashed vertical line + emphasised marker.
+    if knee_idx is not None:
+        ax.axvline(knee_idx, color=KNEE_COLOR, linewidth=1.5,
+                   linestyle="--", alpha=0.7, zorder=3)
+        ax.scatter([knee_idx], [y[knee_idx]], color=KNEE_COLOR, s=80, zorder=6,
+                   edgecolor="white", linewidth=1.2)
+        ax.annotate(
+            f"stop · step {knee_idx + 1}",
+            xy=(knee_idx, y[knee_idx]), xytext=(6, 10),
+            textcoords="offset points", fontsize=8.5, fontweight=600,
+            color=KNEE_COLOR,
+        )
+
+    ax.set_title("energy", fontsize=10, fontweight=500, color=GRAY_DARK, pad=8)
+    ax.set_xlabel("step", fontsize=8.5, color=GRAY_MID)
+    ax.tick_params(colors=GRAY_MID, labelsize=8)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(GRAY_MID)
+    ax.set_box_aspect(0.85)  # keep the plot from stretching to the tall image cells
 
 
 def plot_support_with_gt(
@@ -230,6 +290,8 @@ def plot_contour_evolution(
     batch_idx: Optional[int] = 0,
     n_steps: int = 5,
     save_path: Optional[str] = None,
+    show_knee: bool = True,
+    show_curve: bool = True,
 ) -> plt.Figure:
     """
     Parameters
@@ -240,6 +302,10 @@ def plot_contour_evolution(
     batch_idx        : int → single element; None → all batch elements
     n_steps          : number of evenly-spaced snapshots (default 5)
     save_path        : path to save the figure (optional)
+    show_knee        : append a highlighted panel with the knee-selected final
+                       contour (the one DCF.predict returns) — default True
+    show_curve       : append a panel with the energy curve and the stop point
+                       (the knee) marked on it — default True
 
     Returns
     -------
@@ -258,6 +324,7 @@ def plot_contour_evolution(
 
     batch_elements = [batch_idx] if isinstance(batch_idx, int) else list(range(B))
     n_rows = len(batch_elements)
+    n_cols = n_steps + (1 if show_knee else 0) + (1 if show_curve else 0)
 
     img_arr = np.asarray(img)
     if img_arr.ndim == 3:
@@ -266,8 +333,8 @@ def plot_contour_evolution(
         imgs = [_to_uint8(img_arr[b]) for b in batch_elements]
 
     fig, axes_grid = plt.subplots(
-        n_rows, n_steps,
-        figsize=(3.6 * n_steps, 4.5 * n_rows),
+        n_rows, n_cols,
+        figsize=(3.6 * n_cols, 4.5 * n_rows),
         gridspec_kw={"wspace": 0.05, "hspace": 0.28},
         squeeze=False,
     )
@@ -282,10 +349,35 @@ def plot_contour_evolution(
 
     for row, b in enumerate(batch_elements):
         row_label = f"sample {b}" if n_rows > 1 else None
+        row_indices = step_indices
+        row_colors = colors
+        row_titles = [f"step {i + 1}" for i in step_indices]
+        highlight_col = None
+
+        # Knee index (same selection DCF.predict uses, per sample). Trim to the
+        # real frames — losses may be padded past n_valid by early stop.
+        knee = None
+        if show_knee or show_curve:
+            knee = _knee_index(losses[:n_valid, b])
+            knee = int(min(max(knee, 0), n_valid - 1))
+
+        if show_knee:
+            row_indices = np.append(step_indices, knee)
+            row_colors = colors + [KNEE_COLOR]
+            row_titles = row_titles + [f"knee (step {knee + 1})"]
+            highlight_col = len(step_indices)
+
         _draw_row(
             axes_grid[row], imgs[row], contour_history, losses,
-            b, step_indices, colors, row_label,
+            b, row_indices, row_colors, row_label, row_titles, highlight_col,
         )
+
+        if show_curve:
+            _draw_curve(
+                axes_grid[row][-1],
+                np.asarray(losses[:n_valid, b], dtype=float),
+                step_indices, colors, knee,
+            )
 
     plt.tight_layout(pad=0.4)
 

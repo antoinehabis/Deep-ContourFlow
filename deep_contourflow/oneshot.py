@@ -48,13 +48,14 @@ class DCF:
         thresh: float = 1e-2,
         isolines: Optional[List[float]] = None,
         isoline_weights: Optional[List[float]] = None,
-        lambda_area: float = 1e-4,
+        lambda_area: float = -1e-3,  # negative = balloon expansion (unsupervised win)
         augmentations: Optional[List[str]] = None,
         early_stopping_patience: int = 10,
         early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = False,
         device: Optional[str] = None,
         do_apply_grabcut: bool = False,
+        compile: bool = True,
     ):
         """
         This class implements the one shot version of DCF. It contains a fit and a predict step.
@@ -154,6 +155,7 @@ class DCF:
         self.early_stopping_threshold = early_stopping_threshold
         self.use_mixed_precision = use_mixed_precision
         self.do_apply_grabcut = do_apply_grabcut
+        self.compile = compile  # torch.compile the contour->image layers (tc >=1.4.5)
 
         # Device setup
         if device is None:
@@ -207,8 +209,9 @@ class DCF:
             raise ValueError("exponential_decay must be between 0 and 1")
         if thresh <= 0:
             raise ValueError("thresh must be positive")
-        if lambda_area < 0:
-            raise ValueError("lambda_area must be non-negative")
+        # lambda_area may be negative: a positive weight shrinks the contour (area
+        # penalty), a negative weight inflates it (balloon expansion) — the latter
+        # is the confirmed win on the unsupervised eval.
         if augmentations is not None:
             unknown = set(augmentations) - set(AVAILABLE_AUGMENTATIONS)
             if unknown:
@@ -237,7 +240,9 @@ class DCF:
 
             self._setup_activation_hooks()
 
-            self.smooth = Smoothing(sigma)
+            # Smoothing.kernel is a registered buffer in torch-contour >=1.4.0,
+            # so move the module to the target device (self.device is already set).
+            self.smooth = Smoothing(sigma).to(self.device)
             self.cleaner = CleanContours()
 
         except Exception as e:
@@ -392,14 +397,23 @@ class DCF:
                 # Compute support mask at small_size using the same Contour_to_mask
                 # parameters as predict() so support and query features are directly
                 # comparable (same resolution, same k).
-                ctm_small = Contour_to_mask(small_size, k=1e4)
+                # torch-contour >=1.4.0 registers the pixel mesh as a buffer, so
+                # these modules must be moved to self.device (the mesh no longer
+                # follows the input device automatically at forward time).
+                ctm_small = Contour_to_mask(small_size, k=1e4, compile=self.compile).to(self.device)
                 mask_support_small = ctm_small(polygon_support_dev)
                 distance_map_support_small = None
 
                 if self.isolines is not None:
                     self.isolines = self.isolines.to(self.device)
+                    # Default to uniform isoline weights if none were provided
+                    # (previously crashed with AttributeError on None.to(...)).
+                    if self.isoline_weights is None:
+                        self.isoline_weights = torch.ones(
+                            self.isolines.shape[0], dtype=torch.float32
+                        )
                     self.isoline_weights = self.isoline_weights.to(self.device)
-                    ctd_small = Contour_to_distance_map(small_size)
+                    ctd_small = Contour_to_distance_map(small_size, compile=self.compile).to(self.device)
                     distance_map_support_small, _ = ctd_small(
                         polygon_support_dev, return_mask=True
                     )
@@ -410,7 +424,9 @@ class DCF:
                 if self.isolines is None:
                     self.nb_iso = 1
                     self.isoline_weights = torch.tensor(1.0, dtype=torch.float32)
-                    self.ctf = Contour_to_features(small_size, self.activations)
+                    self.ctf = Contour_to_features(
+                        small_size, self.activations, compile=self.compile
+                    ).to(self.device)
                     class_feature_extractor = Mask_to_features(
                         self.activations
                     ).requires_grad_(False)
@@ -421,7 +437,8 @@ class DCF:
                         self.activations,
                         halfway_value=0.5,
                         isolines=self.isolines,
-                    )
+                        compile=self.compile,
+                    ).to(self.device)
                     class_feature_extractor = Distance_map_to_isoline_features(
                         self.activations, halfway_value=0.5, isolines=self.isolines
                     )
@@ -625,8 +642,12 @@ class DCF:
                             + self.lambda_area * area(contours_query)[:, 0]
                         )
 
+                    # Static loss scaling: scale() improves fp16 dynamic range for
+                    # backward; the gradient is unscaled manually below via
+                    # get_scale(). There is NO optimizer/scaler.step() here (the
+                    # contour is updated by manual gradient descent), so we must NOT
+                    # call scaler.update() — it asserts on missing inf checks.
                     self.scaler.scale(loss_all).backward(inputs=contours_query)
-                    self.scaler.update()
                 else:
                     features_isoline_query, _ = self.ctf(contours_query)
                     loss_batch, loss_scales_isos_batch = (
@@ -661,7 +682,10 @@ class DCF:
                     if self.scaler is not None:
                         raw_grad = raw_grad / self.scaler.get_scale()
                     norm_grad = torch.unsqueeze(torch.norm(raw_grad, dim=-1), -1)
-                    stop = (torch.amax(norm_grad[:, 0], dim=-2) < self.thresh)[-1]
+                    # Per-sample convergence: max node-gradient per contour < thresh.
+                    # (Was indexed with [-1], which collapsed the decision to the LAST
+                    # batch sample only — wrong for B>1.)
+                    stop = torch.amax(norm_grad[:, 0], dim=-2) < self.thresh  # (B, 1)
 
                 if not torch.all(stop):
                     with torch.no_grad():
@@ -758,6 +782,24 @@ class DCF:
         except Exception as e:
             logger.warning(f"Could not move model to device {self.device}: {e}")
 
+    @staticmethod
+    def _resample_closed(c: np.ndarray, k: int) -> np.ndarray:
+        """Resample a polygon (P, 2) to exactly k points, evenly spaced along its
+        perimeter, so a batch of GrabCut results stays a homogeneous (B, k, 2) array."""
+        c = np.asarray(c, dtype=np.float64).reshape(-1, 2)
+        if len(c) < 2:
+            return np.repeat(c[:1] if len(c) else np.zeros((1, 2)), k, axis=0)
+        cc = np.vstack([c, c[:1]])  # close the loop
+        seg = np.sqrt((np.diff(cc, axis=0) ** 2).sum(1))
+        d = np.concatenate([[0.0], np.cumsum(seg)])
+        total = d[-1]
+        if total <= 0:
+            return np.repeat(c[:1], k, axis=0)
+        t = np.linspace(0.0, total, k, endpoint=False)
+        x = np.interp(t, d, cc[:, 0])
+        y = np.interp(t, d, cc[:, 1])
+        return np.stack([x, y], axis=1)
+
     def _apply_grabcut_postprocessing(
         self, img: torch.Tensor, final_contours: np.ndarray
     ) -> np.ndarray:
@@ -799,9 +841,19 @@ class DCF:
 
                 cv2.fillPoly(mask, [contour_for_fill], 1)
 
+                k_out = getattr(self, "nb_points", len(contour))
                 if np.sum(mask) == 0:
                     logger.warning(f"Empty mask for sample {i}, skipping GrabCut")
-                    refined_contours.append(contour)
+                    refined_contours.append(self._resample_closed(contour, k_out))
+                    continue
+
+                # Degenerate/near-zero-area contours make cv2.grabCut unstable (can
+                # SEGFAULT on an empty foreground). Keep the original in that case.
+                cc = contour.astype(np.float64)
+                x_, y_ = cc[:, 0], cc[:, 1]
+                area_px = 0.5 * abs(np.dot(x_, np.roll(y_, -1)) - np.dot(y_, np.roll(x_, -1)))
+                if not np.isfinite(area_px) or area_px < 16.0:
+                    refined_contours.append(self._resample_closed(contour, k_out))
                     continue
 
                 # Apply GrabCut
@@ -848,12 +900,16 @@ class DCF:
                 )
 
                 if contours:
-                    # Get the largest contour
+                    # Get the largest contour, resampled to a fixed point count so the
+                    # batch stays a homogeneous (B, k, 2) array (np.array over ragged
+                    # per-image contours would raise and silently drop all refinement).
                     largest_contour = max(contours, key=cv2.contourArea)
-                    refined_contours.append(largest_contour.reshape(-1, 2))
+                    refined_contours.append(
+                        self._resample_closed(largest_contour.reshape(-1, 2), k_out)
+                    )
                 else:
                     # Fallback to original contour
-                    refined_contours.append(contour)
+                    refined_contours.append(self._resample_closed(contour, k_out))
 
             logger.info("GrabCut post-processing completed")
             return np.array(refined_contours)

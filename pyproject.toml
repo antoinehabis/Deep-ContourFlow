@@ -29,7 +29,7 @@ dependencies = [
     "numpy",
     "torch",
     "torchvision",
-    "torch-contour",
+    "torch-contour>=1.4.5",
     "numba",  # required at import time by torch-contour (not declared by it)
     "scipy",
     "opencv-python",
@@ -39,6 +39,11 @@ dependencies = [
 
 [project.optional-dependencies]
 notebooks = ["jupyter", "notebook"]
+# Everything the dataset scripts and the benchmark need on top of the library.
+benchmark = [
+    "hydra-core>=1.3",  # experiments/foreground_extraction/eval.py
+    "pillow",           # scripts/format_datasets.py
+]
 
 [project.urls]
 Homepage = "https://github.com/antoinehabis/Deep-ContourFlow"

@@ -20,7 +20,7 @@ class Contour_to_features(torch.nn.Module):
     This class leverages two sub-modules: Contour_to_mask and Mask_to_features.
     """
 
-    def __init__(self, size: int, activations: dict):
+    def __init__(self, size: int, activations: dict, compile: bool = True):
         """
         Initializes the Contour_to_features class.
 
@@ -44,7 +44,8 @@ class Contour_to_features(torch.nn.Module):
             An instance of the Mask_to_features class.
         """
         super(Contour_to_features, self).__init__()
-        self.ctm = Contour_to_mask(size, k=1e4).requires_grad_(False)
+        # compile=True -> torch.compile the mask forward (torch-contour >=1.4.5)
+        self.ctm = Contour_to_mask(size, k=1e4, compile=compile).requires_grad_(False)
         self.mtf = Mask_to_features(activations).requires_grad_(False)
         self.compute_features_mask = False
 
@@ -219,6 +220,7 @@ class Contour_to_isoline_features(torch.nn.Module):
         isolines: torch.Tensor,
         halfway_value: float,
         compute_features_mask=False,
+        compile: bool = True,
     ):
         """
         Initializes the Contour_to_features class.
@@ -246,7 +248,8 @@ class Contour_to_isoline_features(torch.nn.Module):
 
         """
         super(Contour_to_isoline_features, self).__init__()
-        self.ctd = Contour_to_distance_map(size).requires_grad_(False)
+        # compile=True -> torch.compile the distance-map forward (torch-contour >=1.4.5)
+        self.ctd = Contour_to_distance_map(size, compile=compile).requires_grad_(False)
         self.dtf = Distance_map_to_isoline_features(
             activations, isolines, halfway_value
         ).requires_grad_(False)
