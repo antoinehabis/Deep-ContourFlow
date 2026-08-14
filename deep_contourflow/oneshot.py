@@ -17,6 +17,7 @@ from .features import (
     Mask_to_features,
     augmentation,
 )
+from .knee import knee_index
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,19 +39,19 @@ except Exception as e:
 class DCF:
     def __init__(
         self,
-        n_epochs: int = 100,
+        n_epochs: int = 200,
         nb_augment: int = 100,
         model: torch.nn.Module = VGG16,
-        sigma: float = 7,
-        learning_rate: float = 5e-2,
-        clip: float = 1e-1,
+        sigma: float = 3.0,
+        learning_rate: float = 1e-2,
+        clip: float = 2e-1,
         exponential_decay: float = 0.998,
-        thresh: float = 1e-2,
+        thresh: float = 1e-5,
         isolines: Optional[List[float]] = None,
         isoline_weights: Optional[List[float]] = None,
-        lambda_area: float = -1e-3,  # negative = balloon expansion (unsupervised win)
+        lambda_area: float = -2e-2,  # negative = balloon expansion
         augmentations: Optional[List[str]] = None,
-        early_stopping_patience: int = 10,
+        early_stopping_patience: int = 20,
         early_stopping_threshold: float = 1e-6,
         use_mixed_precision: bool = False,
         device: Optional[str] = None,
@@ -61,6 +62,14 @@ class DCF:
         This class implements the one shot version of DCF. It contains a fit and a predict step.
         The fit step aims at capturing the features of the support image in the support contour.
         The predict step aims at evolving an initial contour so that the features match as much as possible to the ones of the support
+
+        A note on the defaults: unlike ``UnsupervisedDCF``, these are NOT backed by a
+        large benchmark — there is no one-shot dataset in this repo. They were chosen
+        on a handful of labelled support/query pairs, and they are deliberately not a
+        copy of the unsupervised ones: the two modes use different update rules, and
+        copying the unsupervised values wholesale (``sigma=0.9`` in particular) scored
+        clearly worse. ``sigma`` here needs to be several times larger. Treat them as
+        a starting point and tune for your data.
 
         Parameters:
         -----------
@@ -563,13 +572,16 @@ class DCF:
 
         Returns:
         --------
-        epochs_contours_query[argmin] : np.ndarray
-                                      The predicted contours of shape `(B, K, 2)` that minimize the loss.
+        best_contours : np.ndarray
+               The predicted contours, shape `(B, K, 2)`, taken at the knee of each
+               sample's loss curve (the onset of its last plateau) — the same
+               selection rule as `UnsupervisedDCF`, see `deep_contourflow.knee`.
         scores : torch.Tensor
                Similarity scores for each contour, indicating how well the final query contours match
                the learned features of the support contour, with shape `(B,)`.
         losses : np.ndarray
-               Losses recorded over epochs, shape `(N_epoch, B)`.
+               Losses recorded over epochs, shape `(N_ran, B)`, trimmed to the
+               epochs that actually ran (the evolution can stop early).
         loss_scales_isos : np.ndarray
                          Energy values recorded over epochs, representing isoline-wise losses across layers,
                          shape `(n_epochs, B, num_activations, num_isolines)`.
@@ -629,8 +641,10 @@ class DCF:
 
             best_loss = float("inf")
             patience_counter = 0
+            n_ran = 0  # epochs actually executed (the loop can stop early)
 
             for i in tqdm(range(self.n_epochs), desc="Evolving contour"):
+                n_ran = i + 1
                 if self.use_mixed_precision and self.scaler is not None:
                     with torch.amp.autocast('cuda'):
                         features_isoline_query, _ = self.ctf(contours_query)
@@ -727,16 +741,26 @@ class DCF:
 
             scores = self.similarity_score(features_mask_query).cpu().detach().numpy()
 
-            losses[losses == 0] = 1e10
-            argmin = np.argmin(losses, axis=0)
+            # Drop the trailing frames the early stop never filled, so the loss
+            # curve, the contour history and the returned arrays all describe the
+            # same epochs.
+            losses = losses[:n_ran]
+            loss_scales_isos = loss_scales_isos[:n_ran]
+            epochs_contours_query = epochs_contours_query[:n_ran]
 
-            best_contours = epochs_contours_query[argmin, np.arange(batch_size)]
+            # Pick the final contour exactly as UnsupervisedDCF does: the knee of
+            # the loss curve (onset of its last plateau), per sample. The global
+            # minimum used before keeps sliding past the point where the contour
+            # settles on the object, because the loss goes on creeping down while
+            # the contour over-shrinks onto a sub-part.
+            stop_idx = np.array(
+                [min(max(knee_index(losses[:, k]), 0), n_ran - 1) for k in range(batch_size)]
+            )
+            best_contours = epochs_contours_query[stop_idx, np.arange(batch_size)]
 
             img_dims = np.array(self.img_dim.cpu().numpy())  # [H, W]
             # Store all contour positions in [x_pixel, y_pixel] for visualization.
-            # Count epochs that actually ran before zeros are replaced with 1e10.
-            n_valid = int(np.sum(losses[:, 0] > 0))
-            _epochs_yx_px = epochs_contours_query[:n_valid] * img_dims[None, None, None]
+            _epochs_yx_px = epochs_contours_query * img_dims[None, None, None]
             self.contour_history_ = np.roll(_epochs_yx_px, axis=-1, shift=-1).astype(np.int32)
 
             # best_contours is in [y_norm, x_norm]; scale then swap to [x_pixel, y_pixel]

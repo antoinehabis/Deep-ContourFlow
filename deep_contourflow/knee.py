@@ -61,6 +61,7 @@ def knee_index(
     min_drop: float = 0.05,
     min_plateau: int = 3,
     which: str = "last",
+    max_rebound: float = 0.05,
 ) -> int:
     """Onset of the last plateau ("coude") on an energy curve.
 
@@ -84,6 +85,11 @@ def knee_index(
                   settling points).
     min_plateau : minimum length (frames) of a flat run to count as a plateau.
     which       : "last" (default) or "first" plateau onset.
+    max_rebound : a plateau is ignored when it sits more than this fraction of the
+                  range ABOVE the lowest value reached before it. This rejects the
+                  flat the curve settles on *after* the energy rebounds — which is
+                  what a collapsing/shrinking contour produces. Without it the last
+                  plateau can be a high one and the contour is taken after collapse.
 
     Returns
     -------
@@ -125,9 +131,17 @@ def knee_index(
     plateaus = []
     ref = 0
     for a, b in runs:
-        if (b - a + 1) >= min_plateau and (yg[ref] - yg[a]) >= min_drop:
-            plateaus.append((a, b))
-            ref = b
+        if (b - a + 1) < min_plateau or (yg[ref] - yg[a]) < min_drop:
+            continue
+        # Reject plateaus the curve *climbed* onto. When the contour collapses,
+        # the energy rebounds and then settles at a HIGH value; that flat is not a
+        # settling point on the object. Such a plateau is still below the start of
+        # the curve, so the min_drop test above passes it — it is only recognisable
+        # by sitting well above the best value reached so far.
+        if yg[a] > yg[: a + 1].min() + max_rebound:
+            continue
+        plateaus.append((a, b))
+        ref = b
 
     if not plateaus:
         return int(np.argmax(_chord_vdist(xg, yg)))

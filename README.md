@@ -285,7 +285,7 @@ DCF revisits the classical **active contour (snake)** idea with modern deep feat
    - **Unsupervised:** maximize the contrast between inside and outside — minimize $-\lVert f_\text{in} - f_\text{out}\rVert\,/\,\lVert \text{activations}\rVert$ across scales.
    - **One-shot:** minimize the distance between the query's contour features and the *support* features aggregated at `fit()` time over many augmentations.
 4. **Gradient flow.** The contour points are the **only** optimized variables. The displacement field is Gaussian-smoothed (`sigma`) and clipped (`clip`) for stable, regular evolution; an optional area term prevents collapse/explosion.
-5. **Stopping.** A piecewise-linear fit on the loss curve (unsupervised) or early-stopping (one-shot) selects when to stop, and an optional GrabCut post-processing refines the final boundary.
+5. **Stopping.** Both modes stop the same way: the loss curve is a staircase — descents separated by plateaus where the contour settles — so the contour is taken at the **knee**, the onset of the last plateau (`deep_contourflow.knee`), rather than at the last epoch or the global minimum, which keep creeping past the object onto sub-parts. An optional GrabCut post-processing then refines the boundary.
 
 Because the backbone is never updated, DCF needs **zero training** — it works on a single image, and adapts to new domains simply by swapping the backbone.
 
