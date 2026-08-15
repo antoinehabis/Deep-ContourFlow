@@ -222,20 +222,32 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | CUB-200-2011 | 11 788 | 0.685 | 0.786 | 0.935 | 0.65 |
 | **Macro average** | **17 788** | **0.711** | **0.802** | **0.922** | |
 
-#### Comparison with other unsupervised methods
+#### Comparison with other methods
 
-DCF outperforms traditional methods and competitive unsupervised deep learning approaches:
+**Salient Object Detection (ECSSD & MSRA-B)** — comparing F-measure (higher is better):
 
-| Method | Category | ECSSD | MSRA-B | CUB | Macro Avg |
-|--------|----------|------:|-------:|-----:|----------:|
-| **Deep ContourFlow** | **Training-free Active Contour** | **0.678** | **0.771** | **0.685** | **0.711** |
-| U-Net (no labels) | Unsupervised Deep Learning | 0.520 | 0.590 | 0.460 | 0.523 |
-| Autoencoder-based | Unsupervised Deep Learning | 0.490 | 0.540 | 0.420 | 0.483 |
-| GraphCut | Traditional Methods | 0.480 | 0.550 | 0.410 | 0.480 |
-| GrabCut | Traditional Methods | 0.450 | 0.520 | 0.380 | 0.450 |
-| Watershed | Traditional Methods | 0.420 | 0.480 | 0.350 | 0.417 |
+| Method | Learning Type | ECSSD F-measure | MSRA-B F-measure | Paper |
+|--------|---|---:|---:|---|
+| **Deep ContourFlow** | **Training-free** | **0.829** | **0.865** | This work |
+| DeepUSPS | Unsupervised | 0.887 | 0.912 | NeurIPS 2019 |
+| EGNet | Supervised | 0.947 | 0.963 | ICCV 2019 |
+| PoolNet | Supervised | 0.944 | 0.962 | CVPR 2019 |
+| MINet | Supervised | 0.953 | — | CVPR 2020 |
+| RBD | Unsupervised | 0.782 | 0.825 | CVPR 2014 |
 
-**Key advantage:** DCF achieves **+35.8% improvement** over macro-average unsupervised deep learning baselines (0.711 vs 0.523), while remaining **training-free** — no dataset-specific tuning, no labels, no GPU training.
+**Key insights:**
+- **DCF vs DeepUSPS (Unsupervised):** DCF trades F-measure for full training-free operation and zero labels
+  - ECSSD: -0.058 F-measure (0.829 vs 0.887), but no training required
+  - MSRA-B: -0.047 F-measure (0.865 vs 0.912)
+- **DCF vs Supervised baselines:** Competitive foreground extraction without any training
+  - On MSRA-B: **only -9.7% vs PoolNet** (0.865 vs 0.962), despite 100% less supervision
+- **DCF vs Traditional methods (RBD):** **+6.0% on ECSSD** (0.829 vs 0.782), **+4.9% on MSRA-B** (0.865 vs 0.825)
+
+**Why the comparison matters:**
+- DCF is **training-free** (frozen backbone, no backprop on labeled data)
+- DeepUSPS and supervised methods require dataset-specific training
+- DCF's one-shot mode enables transfer to new domains (medical imaging) without retraining
+- Metric differences reflect different optimization objectives: DCF maximizes IoU; others optimize F-measure or edge alignment
 
 For development and debugging, a faster subset run is also available:
 
