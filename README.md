@@ -258,25 +258,6 @@ python -m experiments.foreground_extraction.eval data.max_samples=200
 This evaluates a seeded 200-image subset of each dataset (~7 min) and produces
 results very close to the full benchmark.
 
-**Why the configuration matters.** The same pipeline on the same 600 images, run
-once with DCF's original pre-tuning settings and once with the configuration
-shipped here — which is also what `UnsupervisedDCF()` now uses by default:
-
-| Configuration | IoU | Dice | Pixel acc. |
-|---------------|------:|------:|-----------:|
-| Original pre-tuning settings | 0.221 | 0.332 | 0.260 |
-| **Shipped defaults** | **0.703** | **0.794** | **0.920** |
-
-The gap comes mostly from four things: starting from a smaller circle
-(`init.size` 0.35), letting the balloon force **expand** rather than shrink
-(`area_force` -0.02), stopping at the knee of the energy curve instead of running
-to a fixed epoch, and the GrabCut refinement of the final contour.
-
-`area_force` is a *relative* weight — the area term is scaled by the per-sample
-separation energy — so it is dimensionless and the useful range is small. Swept
-over the 600-image subset it peaks around -0.02 and degrades in both directions
-(0.703 at -0.02, 0.696 at 0, 0.696 at -0.15, 0.609 at -1.0).
-
 ### How a score is produced
 
 Each image is resized to a 384×384 square, a solid border frame is cropped if one
