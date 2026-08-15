@@ -246,6 +246,14 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 - **vs Traditional methods (RBD):** +6.0% (ECSSD) / +4.9% (MSRA-B) improvement
 - **One advantage:** DCF transfers to medical imaging (one-shot) without retraining backbone
 
+**Fine-Grained Bird Segmentation (CUB-200-2011)** — IoU (DCF results):
+
+| Method | Task | IoU | Notes |
+|--------|------|---:|---|
+| **Deep ContourFlow** | **Segmentation** | **0.685** | Training-free active contours |
+
+*Note: Other CUB entries in literature benchmark fine-grained **classification** (Top-1 Accuracy), a different task. DCF uses CUB for **figure-ground segmentation** evaluation.*
+
 For development and debugging, a faster subset run is also available:
 
 ```bash
