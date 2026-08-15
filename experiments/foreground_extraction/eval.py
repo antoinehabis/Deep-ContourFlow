@@ -49,7 +49,15 @@ from .metrics import METRICS, SegmentationMetrics
 
 REPO = Path(__file__).resolve().parents[2]
 CONF = Path(__file__).resolve().parent / "conf" / "config.yaml"
-_SHORT = {"iou": "iou", "dice": "dice", "pixel_accuracy": "pacc"}  # tqdm postfix labels
+_SHORT = {
+    "iou": "iou",
+    "dice": "dice",
+    "pixel_accuracy": "pacc",
+    "f_measure": "f_β",
+    "mae": "mae",
+    "e_measure": "e_m",
+    "s_measure": "s_m",
+}  # tqdm postfix labels
 
 
 def load_cfg(path: str | Path = CONF) -> DictConfig:
