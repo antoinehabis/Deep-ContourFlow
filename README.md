@@ -226,15 +226,16 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 **Understanding the training paradigms:**
 
-| Training Paradigm | Definition | Backbone | Training | Data Required |
+| Paradigm | Pretraining Type | Fine-tuning on Target Task | Data on Target Dataset | Notes |
 |---|---|---|---|---|
-| **Strictly Training-Free** | No learning, no backbone training | Hand-crafted features | None | None |
-| **No Learning (Frozen)** | Frozen pretrained backbone, no optimization on target | Pretrained CNN (ImageNet) | None | None |
-| **Zero-Shot (SSL)** | Frozen self-supervised backbone, no task training | DINO or other SSL | None | None |
-| **Weakly Supervised** | Trained on class labels only (no segmentation masks) | Pretrained CNN | Yes (on labels) | Image labels only |
-| **Fully Supervised** | Trained end-to-end on segmentation masks | Pretrained CNN | Yes (on masks) | Full segmentation masks |
+| **Strictly Training-Free** | None (hand-crafted) | None | None | RBD, GrabCut |
+| **Supervised Backbone (Frozen)** | ImageNet supervised | None | None | DCF uses VGG16-ImageNet |
+| **Self-Supervised Backbone (Frozen)** | SSL (DINO, etc) | None | None | TokenCut, LOST use DINO |
+| **Multimodal Backbone (Frozen)** | Text-Image pretraining | None | None | FOCUS uses MLLM (Qwen-VL) |
+| **Weakly Supervised** | ImageNet supervised | Yes (on image labels) | Image class labels only | CAM, ACoL |
+| **Fully Supervised** | ImageNet supervised | Yes (on masks) | Full segmentation masks | PoolNet, EGNet, PoolNet, MINet |
 
-**Key insight:** Methods in the first 3 rows require **zero target-dataset data** — they work out of the box. "Weakly Supervised" and "Fully Supervised" require collecting labeled data for the target dataset.
+**Key insight:** All methods requiring **zero target-dataset data** (first 4 rows) differ by their *pretraining source*, but none train/fine-tune on the target task. "Weakly Supervised" and "Fully Supervised" require collecting labeled data for the target dataset.
 
 ---
 
