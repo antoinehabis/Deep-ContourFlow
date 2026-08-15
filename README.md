@@ -239,9 +239,9 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 ---
 
-**Salient Object Detection (ECSSD & MSRA-B)** — all methods, grouped by paradigm:
+**Salient Object Detection (ECSSD & MSRA-B)** — ranked by performance ↓ within each paradigm:
 
-| Paradigm | Method | ECSSD F | MSRA-B F | Backbone | Target Data |
+| Paradigm | Method | ECSSD F ↓ | MSRA-B F ↓ | Backbone | Target Data |
 |---|---|---:|---:|---|---|
 | **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **0.829** | **0.865** | VGG16-ImageNet | **None** |
 | | | | | | |
@@ -253,9 +253,9 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | 🔧 Traditional Algorithms | **🥇 RBD** | **0.782** | **0.825** | Hand-crafted | None |
 | | GrabCut | 0.732 | 0.758 | Hand-crafted | None |
 | | | | | | |
-| 📚 Requires Target Training | MINet | 0.953 | — | ResNet-50 | Full masks |
-| | **🥇 EGNet** | 0.947 | **0.963** | ResNet-50 | Full masks |
+| 📚 Requires Target Training | **🥇 EGNet** | **0.947** | **0.963** | ResNet-50 | Full masks |
 | | PoolNet | 0.944 | 0.962 | ResNet-50 | Full masks |
+| | MINet | 0.953 | — | ResNet-50 | Full masks |
 | | DeepUSPS | 0.887 | 0.912 | ResNet-50 | Pseudo-labels |
 
 **Key comparisons:**
@@ -264,9 +264,9 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 - **DCF vs Multimodal (MLLM):** FOCUS +8.6% (0.915 vs 0.829), but requires inference server
 - **DCF vs Training Methods:** -5.8% to -11.5% gap, but zero target data and transfers to new domains
 
-**Figure-Ground Segmentation (CUB-200-2011)** — all methods, grouped by paradigm:
+**Figure-Ground Segmentation (CUB-200-2011)** — ranked by performance ↓ within each paradigm:
 
-| Paradigm | Method | mIoU (%) | Backbone | Target Data |
+| Paradigm | Method | mIoU (%) ↓ | Backbone | Target Data |
 |---|---|---:|---|---|
 | **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **68.5** | VGG16-ImageNet | **None** |
 | | | | | |
