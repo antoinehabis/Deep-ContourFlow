@@ -224,11 +224,25 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 #### Comparison with other methods
 
+**Understanding the training paradigms:**
+
+| Training Paradigm | Definition | Backbone | Training | Data Required |
+|---|---|---|---|---|
+| **Strictly Training-Free** | No learning, no backbone training | Hand-crafted features | None | None |
+| **No Learning (Frozen)** | Frozen pretrained backbone, no optimization on target | Pretrained CNN (ImageNet) | None | None |
+| **Zero-Shot (SSL)** | Frozen self-supervised backbone, no task training | DINO or other SSL | None | None |
+| **Weakly Supervised** | Trained on class labels only (no segmentation masks) | Pretrained CNN | Yes (on labels) | Image labels only |
+| **Fully Supervised** | Trained end-to-end on segmentation masks | Pretrained CNN | Yes (on masks) | Full segmentation masks |
+
+**Key insight:** Methods in the first 3 rows require **zero target-dataset data** — they work out of the box. "Weakly Supervised" and "Fully Supervised" require collecting labeled data for the target dataset.
+
+---
+
 **Salient Object Detection (ECSSD & MSRA-B)** — comparing F-measure (higher is better):
 
 | Method | Training Paradigm | Data Required | Backbone | ECSSD F | MSRA-B F |
 |--------|---|---|---|---:|---:|
-| **Deep ContourFlow** | **Frozen Features** | **None** | VGG16 | **0.829** | **0.865** |
+| **Deep ContourFlow** | **No Learning (Frozen)** | **None** | VGG16 | **0.829** | **0.865** |
 | FOCUS | Zero-Shot MLLM | None | Qwen-VL / GPT-4V | 0.915 | — |
 | TokenCut | Zero-Shot (SSL) | None | DINO (ImageNet) | 0.874 | — |
 | DeepUSPS | Unsupervised + Iterative | Pseudo-labels on target | ResNet-50 | 0.887 | 0.912 |
@@ -250,7 +264,7 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 | Method | Training Paradigm | Data Required | mIoU (%) | Notes |
 |--------|---|---|---:|---|
-| **Deep ContourFlow** | **Frozen Features** | **None** | **68.5** | Training-free active contours |
+| **Deep ContourFlow** | **No Learning (Frozen)** | **None** | **68.5** | Training-free active contours |
 | TokenCut | Zero-Shot (SSL) | None | 58.8 | DINO backbone (CVPR 2022) |
 | LOST | Zero-Shot (SSL) | None | 54.3 | DINO seed token selection (ICCV 2021) |
 | ACoL | Weakly Supervised | Class labels only | 54.1 | Adversarial erasing (CVPR 2018) |
