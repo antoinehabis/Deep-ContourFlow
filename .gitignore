@@ -17,6 +17,9 @@ visualisations/
 experiments/**/results/
 outputs/
 
+# Benchmark reference files
+benchmark*.csv
+
 # Datasets: downloaded archives, extracted sources and the formatted copy.
 # Recreate them with `make datasets`.
 datasets/

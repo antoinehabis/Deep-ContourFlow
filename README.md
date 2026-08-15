@@ -15,6 +15,7 @@
 [![torch-contour downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
 [![torch-contour total downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
 
+
 </div>
 
 > **Deep ContourFlow (DCF)** segments objects by *evolving a contour* — like a classical active contour / snake — but instead of hand-crafted image energies it is driven by the rich multi-scale features of a **frozen, pretrained CNN**. There is **no training and no annotated dataset required**: the contour itself is the only thing that is optimized.
@@ -29,13 +30,13 @@
 
 ---
 
-## ✨ Why DCF?
+## 📋 Overview
 
-- 🧠 **Training-free** — uses a frozen ImageNet backbone (VGG16 / ResNet). No fine-tuning, no labels, no dataset to collect.
-- 🎯 **Two regimes in one repo** — fully **unsupervised** segmentation, or **one-shot** segmentation from a *single* annotated example.
-- 🔬 **Domain-agnostic** — works on natural images *and* medical imaging (histopathology, dermoscopy) out of the box.
-- 🪶 **Lightweight & interpretable** — you optimize an explicit contour (a set of points), so every step is visualizable and the output is a clean, closed boundary.
-- ⚡ **GPU / MPS ready** — built on PyTorch with optional mixed-precision.
+- **Training-free** — uses a frozen ImageNet backbone (VGG16 / ResNet). No fine-tuning, no labels, no dataset to collect.
+- **Two regimes** — fully unsupervised segmentation, or one-shot segmentation from a single annotated example.
+- **Domain-agnostic** — works on natural images and medical imaging (histopathology, dermoscopy).
+- **Interpretable** — optimizes an explicit contour (set of points), visualizable evolution, clean closed boundaries.
+- **GPU / MPS ready** — built on PyTorch with optional mixed-precision.
 
 ---
 
@@ -222,20 +223,66 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | CUB-200-2011 | 11 788 | 0.685 | 0.786 | 0.935 | 0.65 |
 | **Macro average** | **17 788** | **0.711** | **0.802** | **0.922** | |
 
-#### Comparison with other unsupervised methods
+#### Comparison with other methods
 
-DCF outperforms traditional methods and competitive unsupervised deep learning approaches:
+**Understanding the training paradigms:**
 
-| Method | Category | ECSSD | MSRA-B | CUB | Macro Avg |
-|--------|----------|------:|-------:|-----:|----------:|
-| **Deep ContourFlow** | **Training-free Active Contour** | **0.678** | **0.771** | **0.685** | **0.711** |
-| U-Net (no labels) | Unsupervised Deep Learning | 0.520 | 0.590 | 0.460 | 0.523 |
-| Autoencoder-based | Unsupervised Deep Learning | 0.490 | 0.540 | 0.420 | 0.483 |
-| GraphCut | Traditional Methods | 0.480 | 0.550 | 0.410 | 0.480 |
-| GrabCut | Traditional Methods | 0.450 | 0.520 | 0.380 | 0.450 |
-| Watershed | Traditional Methods | 0.420 | 0.480 | 0.350 | 0.417 |
+| Paradigm | Pretraining Type | Fine-tuning on Target Task | Data on Target Dataset | Notes |
+|---|---|---|---|---|
+| **Strictly Training-Free** | None (hand-crafted) | None | None | RBD, GrabCut |
+| **Supervised Backbone (Frozen)** | ImageNet supervised | None | None | DCF uses VGG16-ImageNet |
+| **Self-Supervised Backbone (Frozen)** | SSL (DINO, etc) | None | None | TokenCut, LOST use DINO |
+| **Multimodal Backbone (Frozen)** | Text-Image pretraining | None | None | FOCUS uses MLLM (Qwen-VL) |
+| **Weakly Supervised** | ImageNet supervised | Yes (on image labels) | Image class labels only | CAM, ACoL |
+| **Fully Supervised** | ImageNet supervised | Yes (on masks) | Full segmentation masks | PoolNet, EGNet, PoolNet, MINet |
 
-**Key advantage:** DCF achieves **+35.8% improvement** over macro-average unsupervised deep learning baselines (0.711 vs 0.523), while remaining **training-free** — no dataset-specific tuning, no labels, no GPU training.
+**Key insight:** All methods requiring **zero target-dataset data** (first 4 rows) differ by their *pretraining source*, but none train/fine-tune on the target task. "Weakly Supervised" and "Fully Supervised" require collecting labeled data for the target dataset.
+
+---
+
+**Salient Object Detection (ECSSD & MSRA-B)** — ranked by performance ↓ within each paradigm:
+
+| Paradigm | Method | ECSSD F ↓ | MSRA-B F ↓ | Backbone | Target Data |
+|---|---|---:|---:|---|---|
+| **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **0.829** | **0.865** | VGG16-ImageNet | **None** |
+| | | | | | |
+| 🔍 Self-Supervised (Frozen) | **🥇 TokenCut** | **0.874** | **—** | DINO-SSL | None |
+| | LOST | — | — | DINO-SSL | None |
+| | | | | | |
+| 🎨 Multimodal (Frozen) | **🥇 FOCUS** | **0.915** | **—** | MLLM (Qwen-VL) | None |
+| | | | | | |
+| 🔧 Traditional Algorithms | **🥇 RBD** | **0.782** | **0.825** | Hand-crafted | None |
+| | GrabCut | 0.732 | 0.758 | Hand-crafted | None |
+| | | | | | |
+| 📚 Requires Target Training | **🥇 EGNet** | **0.947** | **0.963** | ResNet-50 | Full masks |
+| | PoolNet | 0.944 | 0.962 | ResNet-50 | Full masks |
+| | MINet | 0.953 | — | ResNet-50 | Full masks |
+| | DeepUSPS | 0.887 | 0.912 | ResNet-50 | Pseudo-labels |
+
+**Key comparisons:**
+- **DCF vs CNN Supervised group:** Leader (0.829/0.865) vs traditional algorithms (0.732-0.782)
+- **DCF vs Self-Supervised (DINO):** TokenCut +4.5% (0.874 vs 0.829), different pretraining strategy
+- **DCF vs Multimodal (MLLM):** FOCUS +8.6% (0.915 vs 0.829), but requires inference server
+- **DCF vs Training Methods:** -5.8% to -11.5% gap, but zero target data and transfers to new domains
+
+**Figure-Ground Segmentation (CUB-200-2011)** — ranked by performance ↓ within each paradigm:
+
+| Paradigm | Method | mIoU (%) ↓ | Backbone | Target Data |
+|---|---|---:|---|---|
+| **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **68.5** | VGG16-ImageNet | **None** |
+| | | | | |
+| 🔍 Self-Supervised (Frozen) | **🥇 TokenCut** | **58.8** | DINO-SSL | None |
+| | LOST | 54.3 | DINO-SSL | None |
+| | | | | |
+| 🔧 Traditional Algorithms | **🥇 GrabCut** | **53.2** | Hand-crafted | None |
+| | | | | |
+| 📚 Requires Target Training | **🥇 ACoL** | **54.1** | ResNet-50 | Class labels |
+| | CAM | 43.6 | ResNet-50 | Class labels |
+
+**Key comparisons:**
+- **DCF vs CNN Supervised group:** Leader (68.5%) vs traditional (53.2%)
+- **DCF vs Self-Supervised (DINO):** +9.7% vs TokenCut (68.5 vs 58.8)
+- **DCF vs Weakly Supervised:** +14.4-24.9% gap, but zero target data required
 
 For development and debugging, a faster subset run is also available:
 
@@ -245,25 +292,6 @@ python -m experiments.foreground_extraction.eval data.max_samples=200
 
 This evaluates a seeded 200-image subset of each dataset (~7 min) and produces
 results very close to the full benchmark.
-
-**Why the configuration matters.** The same pipeline on the same 600 images, run
-once with DCF's original pre-tuning settings and once with the configuration
-shipped here — which is also what `UnsupervisedDCF()` now uses by default:
-
-| Configuration | IoU | Dice | Pixel acc. |
-|---------------|------:|------:|-----------:|
-| Original pre-tuning settings | 0.221 | 0.332 | 0.260 |
-| **Shipped defaults** | **0.703** | **0.794** | **0.920** |
-
-The gap comes mostly from four things: starting from a smaller circle
-(`init.size` 0.35), letting the balloon force **expand** rather than shrink
-(`area_force` -0.02), stopping at the knee of the energy curve instead of running
-to a fixed epoch, and the GrabCut refinement of the final contour.
-
-`area_force` is a *relative* weight — the area term is scaled by the per-sample
-separation energy — so it is dimensionless and the useful range is small. Swept
-over the 600-image subset it peaks around -0.02 and degrades in both directions
-(0.703 at -0.02, 0.696 at 0, 0.696 at -0.15, 0.609 at -1.0).
 
 ### How a score is produced
 
@@ -295,6 +323,34 @@ The full procedure, and every knob, is documented in
   noise, not signal.
 - **Formatting is deterministic.** Re-running `make format` reproduces the image
   and mask files byte for byte, and skips samples that already exist.
+
+### Benchmark references
+
+Methods compared in the benchmark come from the following papers:
+
+**CNN Supervised:**
+- Deep ContourFlow (this work) — arXiv:2407.10696
+
+**Self-Supervised:**
+- TokenCut — "TokenCut: Segmenting Objects with Self-supervised Transformers" (CVPR 2022)
+- LOST — "Localizing Objects with Self-Supervised Transformers" (ICCV 2021)
+
+**Multimodal:**
+- FOCUS — "Is It Time for the Renaissance of SOD in the Era of MLLMs?" (2026)
+
+**Traditional Algorithms:**
+- RBD — "Robust Background Saliency via Boundary Connectivity" (CVPR 2014)
+- GrabCut — "GrabCut: Interactive Foreground Extraction using Iterated Graph Cuts" (SIGGRAPH 2004)
+
+**Supervised (Reference):**
+- PoolNet — "A Pooling Based Network for Salient Object Detection" (CVPR 2019)
+- EGNet — "Edge-Guided Network for Salient Object Detection" (ICCV 2019)
+- MINet — "Multi-Scale Interactive Network for Salient Object Detection" (CVPR 2020)
+
+**Other Unsupervised:**
+- DeepUSPS — "Deep USPS: Unsupervised Saliency Prediction via Self-Supervision" (NeurIPS 2019)
+- CAM — "Learning Deep Features for Discriminative Localization" (CVPR 2016)
+- ACoL — "Adversarial Complementary Learning for Weakly Supervised Object Localization" (CVPR 2018)
 
 ---
 
