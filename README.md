@@ -15,11 +15,6 @@
 [![torch-contour downloads](https://static.pepy.tech/badge/torch_contour/month)](https://pepy.tech/project/torch_contour)
 [![torch-contour total downloads](https://static.pepy.tech/badge/torch_contour)](https://pepy.tech/project/torch_contour)
 
-**📊 Benchmark Results:**
-[![ECSSD F-measure](https://img.shields.io/badge/ECSSD-0.829-success?style=flat-square)](https://www.cse.cuhk.edu.hk/leojia/projects/hsaliency/dataset.html)
-[![MSRA-B F-measure](https://img.shields.io/badge/MSRA--B-0.865-success?style=flat-square)](https://mmcheng.net/msra10k/)
-[![CUB mIoU](https://img.shields.io/badge/CUB--200-68.5%25-success?style=flat-square)](https://www.vision.caltech.edu/datasets/cub_200_2011/)
-![Training-Free](https://img.shields.io/badge/Training-Free-blue?style=flat-square)
 
 </div>
 
@@ -42,29 +37,6 @@
 - 🔬 **Domain-agnostic** — works on natural images *and* medical imaging (histopathology, dermoscopy) out of the box.
 - 🪶 **Lightweight & interpretable** — you optimize an explicit contour (a set of points), so every step is visualizable and the output is a clean, closed boundary.
 - ⚡ **GPU / MPS ready** — built on PyTorch with optional mixed-precision.
-
----
-
-## 🏆 Benchmark Highlights
-
-**DCF is the training-free leader** on three major benchmarks:
-
-| Benchmark | ECSSD | MSRA-B | CUB-200 | Data Required |
-|-----------|------:|-------:|-------:|---|
-| **🥇 Deep ContourFlow** | **0.829** | **0.865** | **68.5%** | **None** ✅ |
-| TokenCut (Self-Supervised) | 0.874 | — | 58.8% | None |
-| FOCUS (Multimodal LLM) | 0.915 | — | — | None |
-| EGNet (Fully Supervised) | 0.947 | **0.963** | — | Full masks ❌ |
-
-**Why DCF stands out:**
-- ✅ **No target data required** — works out of the box on new datasets
-- ✅ **+6-15% vs traditional methods** (RBD, GrabCut)
-- ✅ **Competitive with SSL/MLLM** while using simpler pretrained CNN
-- ✅ **Transfers to medical imaging** (one-shot mode) without retraining
-
-**[🏆 View Interactive Leaderboard](https://claude.ai/code/artifact/76cbf47c-c11e-4588-b2df-58d6dbf97954)** — Explore detailed benchmark results with comparison paradigms.
-
-[→ See full benchmark results below](#salient-object-detection-ecssd--msra-b--ranked-by-performance--within-each-paradigm)
 
 ---
 
