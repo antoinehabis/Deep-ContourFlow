@@ -245,18 +245,18 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 |---|---|---:|---:|---|---|
 | **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **0.829** | **0.865** | VGG16-ImageNet | **None** |
 | | | | | | |
-| 🔍 Self-Supervised (Frozen) | TokenCut | 0.874 | — | DINO-SSL | None |
+| 🔍 Self-Supervised (Frozen) | **🥇 TokenCut** | **0.874** | **—** | DINO-SSL | None |
 | | LOST | — | — | DINO-SSL | None |
 | | | | | | |
-| 🎨 Multimodal (Frozen) | FOCUS | 0.915 | — | MLLM (Qwen-VL) | None |
+| 🎨 Multimodal (Frozen) | **🥇 FOCUS** | **0.915** | **—** | MLLM (Qwen-VL) | None |
 | | | | | | |
-| 🔧 Traditional Algorithms | RBD | 0.782 | 0.825 | Hand-crafted | None |
+| 🔧 Traditional Algorithms | **🥇 RBD** | **0.782** | **0.825** | Hand-crafted | None |
 | | GrabCut | 0.732 | 0.758 | Hand-crafted | None |
 | | | | | | |
-| 📚 Requires Target Training | DeepUSPS | 0.887 | 0.912 | ResNet-50 | Pseudo-labels |
-| | EGNet | 0.947 | 0.963 | ResNet-50 | Full masks |
+| 📚 Requires Target Training | MINet | 0.953 | — | ResNet-50 | Full masks |
+| | **🥇 EGNet** | 0.947 | **0.963** | ResNet-50 | Full masks |
 | | PoolNet | 0.944 | 0.962 | ResNet-50 | Full masks |
-| | MINet | 0.953 | — | ResNet-50 | Full masks |
+| | DeepUSPS | 0.887 | 0.912 | ResNet-50 | Pseudo-labels |
 
 **Key comparisons:**
 - **DCF vs CNN Supervised group:** Leader (0.829/0.865) vs traditional algorithms (0.732-0.782)
@@ -270,12 +270,12 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 |---|---|---:|---|---|
 | **💡 CNN Supervised (Frozen)** | **🥇 Deep ContourFlow** | **68.5** | VGG16-ImageNet | **None** |
 | | | | | |
-| 🔍 Self-Supervised (Frozen) | TokenCut | 58.8 | DINO-SSL | None |
+| 🔍 Self-Supervised (Frozen) | **🥇 TokenCut** | **58.8** | DINO-SSL | None |
 | | LOST | 54.3 | DINO-SSL | None |
 | | | | | |
-| 🔧 Traditional Algorithms | GrabCut | 53.2 | Hand-crafted | None |
+| 🔧 Traditional Algorithms | **🥇 GrabCut** | **53.2** | Hand-crafted | None |
 | | | | | |
-| 📚 Requires Target Training | ACoL | 54.1 | ResNet-50 | Class labels |
+| 📚 Requires Target Training | **🥇 ACoL** | **54.1** | ResNet-50 | Class labels |
 | | CAM | 43.6 | ResNet-50 | Class labels |
 
 **Key comparisons:**
