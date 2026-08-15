@@ -226,28 +226,25 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 **Salient Object Detection (ECSSD & MSRA-B)** — comparing F-measure (higher is better):
 
-| Method | Learning Type | ECSSD F-measure | MSRA-B F-measure | Paper |
-|--------|---|---:|---:|---|
-| **Deep ContourFlow** | **Training-free** | **0.829** | **0.865** | This work |
-| DeepUSPS | Unsupervised | 0.887 | 0.912 | NeurIPS 2019 |
-| EGNet | Supervised | 0.947 | 0.963 | ICCV 2019 |
-| PoolNet | Supervised | 0.944 | 0.962 | CVPR 2019 |
-| MINet | Supervised | 0.953 | — | CVPR 2020 |
-| RBD | Unsupervised | 0.782 | 0.825 | CVPR 2014 |
+| Method | Training Paradigm | Data Required | Backbone | ECSSD F | MSRA-B F |
+|--------|---|---|---|---:|---:|
+| **Deep ContourFlow** | **Frozen Features** | **None** | VGG16 | **0.829** | **0.865** |
+| FOCUS | Zero-Shot MLLM | None | Qwen-VL / GPT-4V | 0.915 | — |
+| TokenCut | Zero-Shot (SSL) | None | DINO (ImageNet) | 0.874 | — |
+| DeepUSPS | Unsupervised + Iterative | Pseudo-labels on target | ResNet-50 | 0.887 | 0.912 |
+| MINet | Fully Supervised | Full mask GT on target | ResNet-50 | 0.953 | — |
+| EGNet | Fully Supervised | Full mask GT on target | ResNet-50 | 0.947 | 0.963 |
+| PoolNet | Fully Supervised | Full mask GT on target | ResNet-50 | 0.944 | 0.962 |
+| RBD | Algorithm (no learning) | None | Hand-crafted features | 0.782 | 0.825 |
+| GrabCut | Algorithm (no learning) | None | Hand-crafted features | 0.732 | 0.758 |
 
-**Key insights:**
-- **DCF vs DeepUSPS (Unsupervised):** DCF trades F-measure for full training-free operation and zero labels
-  - ECSSD: -0.058 F-measure (0.829 vs 0.887), but no training required
-  - MSRA-B: -0.047 F-measure (0.865 vs 0.912)
-- **DCF vs Supervised baselines:** Competitive foreground extraction without any training
-  - On MSRA-B: **only -9.7% vs PoolNet** (0.865 vs 0.962), despite 100% less supervision
-- **DCF vs Traditional methods (RBD):** **+6.0% on ECSSD** (0.829 vs 0.782), **+4.9% on MSRA-B** (0.865 vs 0.825)
-
-**Why the comparison matters:**
-- DCF is **training-free** (frozen backbone, no backprop on labeled data)
-- DeepUSPS and supervised methods require dataset-specific training
-- DCF's one-shot mode enables transfer to new domains (medical imaging) without retraining
-- Metric differences reflect different optimization objectives: DCF maximizes IoU; others optimize F-measure or edge alignment
+**Where DCF stands:**
+- **vs Fully Supervised (PoolNet/EGNet):** -11.5% (ECSSD) / -10.7% (MSRA-B), but **zero target-dataset training**
+- **vs DeepUSPS (Unsupervised):** -5.8% (ECSSD) / -4.7% (MSRA-B), but no pseudo-label iteration on target
+- **vs Zero-Shot MLLM (FOCUS):** -8.6% (ECSSD), but lightweight (~0.75s/image vs inference server latency)
+- **vs TokenCut (Zero-Shot SSL):** -4.5% (ECSSD), both training-free; TokenCut uses DINO backbone
+- **vs Traditional methods (RBD):** +6.0% (ECSSD) / +4.9% (MSRA-B) improvement
+- **One advantage:** DCF transfers to medical imaging (one-shot) without retraining backbone
 
 For development and debugging, a faster subset run is also available:
 
