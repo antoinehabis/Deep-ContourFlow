@@ -241,15 +241,11 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 **Salient Object Detection (ECSSD & MSRA-B)** — grouped by pretraining paradigm:
 
-#### **Supervised Backbone (Frozen) — Zero Target Data**
+#### **CNN Supervised Backbone (Frozen) — Zero Target Data**
 
 | Method | ECSSD F | MSRA-B F | Backbone | Mechanism |
 |--------|---:|---:|---|---|
 | **🥇 Deep ContourFlow** | **0.829** | **0.865** | VGG16-ImageNet | Active contour evolution |
-| RBD | 0.782 | 0.825 | Hand-crafted | Boundary connectivity heuristics |
-| GrabCut | 0.732 | 0.758 | Hand-crafted | Graph-cut on color priors |
-
-**DCF advantage in this group:** +6.0% (ECSSD) / +4.9% (MSRA-B) vs traditional methods. Combines pretrained features with interpretable contour evolution.
 
 ---
 
@@ -260,7 +256,7 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | TokenCut | 0.874 | — | DINO-SSL | Normalized Cut on attention |
 | LOST | — | — | DINO-SSL | Attention seed selection |
 
-*Note: DINO (self-supervised) vs VGG16 (supervised) pretraining — different initialization strategy.*
+*Note: Different pretraining (self-supervised DINO vs supervised ImageNet).*
 
 ---
 
@@ -271,6 +267,17 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | FOCUS | 0.915 | — | MLLM (Qwen-VL) | MLLM attention maps |
 
 *Requires MLLM inference (server latency). DCF is 0.75s/image locally.*
+
+---
+
+#### **Traditional Algorithms (No Learning) — Zero Target Data**
+
+| Method | ECSSD F | MSRA-B F | Backbone | Mechanism |
+|--------|---:|---:|---|---|
+| RBD | 0.782 | 0.825 | Hand-crafted | Boundary connectivity heuristics |
+| GrabCut | 0.732 | 0.758 | Hand-crafted | Graph-cut on color priors |
+
+**DCF vs Traditional:** +6.0% (ECSSD) / +4.9% (MSRA-B). Benefits from pretrained CNN backbone.
 
 ---
 
@@ -287,14 +294,11 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 
 **Figure-Ground Segmentation (CUB-200-2011)** — grouped by pretraining paradigm:
 
-#### **Supervised Backbone (Frozen) — Zero Target Data**
+#### **CNN Supervised Backbone (Frozen) — Zero Target Data**
 
 | Method | mIoU (%) | Backbone | Mechanism |
 |--------|---:|---|---|
 | **🥇 Deep ContourFlow** | **68.5** | VGG16-ImageNet | Active contour evolution |
-| GrabCut | 53.2 | Hand-crafted | Graph-cut on color priors |
-
-**DCF advantage in this group:** +15.3% vs traditional methods.
 
 ---
 
@@ -305,7 +309,17 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | TokenCut | 58.8 | DINO-SSL | Normalized Cut on attention |
 | LOST | 54.3 | DINO-SSL | Attention seed selection |
 
-**DCF vs SSL methods:** +9.7% vs TokenCut. Both are training-free, but DCF uses simpler active-contour framework (no complex attention mechanisms).
+**DCF vs SSL methods:** +9.7% vs TokenCut. Both training-free; DCF uses simpler active-contour framework.
+
+---
+
+#### **Traditional Algorithms (No Learning) — Zero Target Data**
+
+| Method | mIoU (%) | Backbone | Mechanism |
+|--------|---:|---|---|
+| GrabCut | 53.2 | Hand-crafted | Graph-cut on color priors |
+
+**DCF vs Traditional:** +15.3% improvement.
 
 ---
 
@@ -316,7 +330,7 @@ make reproduce   # Full benchmark: ~3–4 h on one modern GPU
 | ACoL | Weakly Supervised | 54.1 | Class labels only |
 | CAM | Weakly Supervised | 43.6 | Class labels only |
 
-**DCF vs Training Methods:** +14.4% to +24.9% performance gap, and **zero target data required**.
+**DCF vs Training Methods:** +14.4% to +24.9% gap, but **zero target data required**.
 
 For development and debugging, a faster subset run is also available:
 
