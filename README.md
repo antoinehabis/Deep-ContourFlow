@@ -30,13 +30,13 @@
 
 ---
 
-## ✨ Why DCF?
+## 📋 Overview
 
-- 🧠 **Training-free** — uses a frozen ImageNet backbone (VGG16 / ResNet). No fine-tuning, no labels, no dataset to collect.
-- 🎯 **Two regimes in one repo** — fully **unsupervised** segmentation, or **one-shot** segmentation from a *single* annotated example.
-- 🔬 **Domain-agnostic** — works on natural images *and* medical imaging (histopathology, dermoscopy) out of the box.
-- 🪶 **Lightweight & interpretable** — you optimize an explicit contour (a set of points), so every step is visualizable and the output is a clean, closed boundary.
-- ⚡ **GPU / MPS ready** — built on PyTorch with optional mixed-precision.
+- **Training-free** — uses a frozen ImageNet backbone (VGG16 / ResNet). No fine-tuning, no labels, no dataset to collect.
+- **Two regimes** — fully unsupervised segmentation, or one-shot segmentation from a single annotated example.
+- **Domain-agnostic** — works on natural images and medical imaging (histopathology, dermoscopy).
+- **Interpretable** — optimizes an explicit contour (set of points), visualizable evolution, clean closed boundaries.
+- **GPU / MPS ready** — built on PyTorch with optional mixed-precision.
 
 ---
 
