@@ -323,6 +323,34 @@ The full procedure, and every knob, is documented in
 - **Formatting is deterministic.** Re-running `make format` reproduces the image
   and mask files byte for byte, and skips samples that already exist.
 
+### Benchmark references
+
+Methods compared in the benchmark come from the following papers:
+
+**CNN Supervised:**
+- Deep ContourFlow (this work) — arXiv:2407.10696
+
+**Self-Supervised:**
+- TokenCut — "TokenCut: Segmenting Objects with Self-supervised Transformers" (CVPR 2022)
+- LOST — "Localizing Objects with Self-Supervised Transformers" (ICCV 2021)
+
+**Multimodal:**
+- FOCUS — "Is It Time for the Renaissance of SOD in the Era of MLLMs?" (2026)
+
+**Traditional Algorithms:**
+- RBD — "Robust Background Saliency via Boundary Connectivity" (CVPR 2014)
+- GrabCut — "GrabCut: Interactive Foreground Extraction using Iterated Graph Cuts" (SIGGRAPH 2004)
+
+**Supervised (Reference):**
+- PoolNet — "A Pooling Based Network for Salient Object Detection" (CVPR 2019)
+- EGNet — "Edge-Guided Network for Salient Object Detection" (ICCV 2019)
+- MINet — "Multi-Scale Interactive Network for Salient Object Detection" (CVPR 2020)
+
+**Other Unsupervised:**
+- DeepUSPS — "Deep USPS: Unsupervised Saliency Prediction via Self-Supervision" (NeurIPS 2019)
+- CAM — "Learning Deep Features for Discriminative Localization" (CVPR 2016)
+- ACoL — "Adversarial Complementary Learning for Weakly Supervised Object Localization" (CVPR 2018)
+
 ---
 
 ## 🔍 How it works
